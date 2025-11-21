@@ -364,10 +364,6 @@ if mode == "teacher":
                     mime="text/csv"
                 )
 
-
-# ---------------------------
-# STUDENT VIEW (QR only)
-# ---------------------------
 elif mode == "mark":
     st.title("Mark Attendance")
 
@@ -385,16 +381,24 @@ elif mode == "mark":
 
     st.info(f"Session: {session_name}")
 
-    with st.form("attend"):
-        reg = st.text_input("Registration Number")
-        sub = st.form_submit_button("Submit")
-
-    if sub:
-        if not reg.strip():
-            st.error("Please enter registration number.")
-        else:
-            ok, msg = record_attendance(session_name, reg.strip(), token, token_ts)
-            if ok:
-                st.success("Attendance Recorded ✔")
+    # Prevent multiple submissions from same device/browser
+    if "submitted_once" not in st.session_state:
+        st.session_state.submitted_once = False
+    
+    if st.session_state.submitted_once:
+        st.success("Your attendance is already recorded ✔")
+    else:
+        with st.form("attend"):
+            reg = st.text_input("Registration Number")
+            sub = st.form_submit_button("Submit")
+    
+        if sub:
+            if not reg.strip():
+                st.error("Please enter registration number.")
             else:
-                st.error(msg)
+                ok, msg = record_attendance(session_name, reg.strip(), token, token_ts)
+                if ok:
+                    st.session_state.submitted_once = True
+                    st.success("Attendance Recorded ✔")
+                else:
+                    st.error(msg)
