@@ -257,14 +257,6 @@ if mode == "teacher":
             st.session_state.running_session_name = ""
             st.session_state.running_session_display = ""
 
-    # Show uploaded image preview option (developer-provided path)
-    if UPLOADED_IMAGE_PATH:
-        if st.sidebar.checkbox("Show last uploaded image (debug)", value=False):
-            try:
-                st.image(UPLOADED_IMAGE_PATH, caption="Last uploaded image (local path)")
-            except Exception:
-                st.sidebar.warning("Could not load uploaded image from path.")
-
     # Determine actual active state from DB (in case another tab ended it)
     is_active_db = session_active(st.session_state.running_session_name) if st.session_state.running_session_name else False
     is_active_local = st.session_state.session_started and bool(st.session_state.running_session_name)
