@@ -6,11 +6,21 @@ from io import BytesIO, StringIO
 import urllib.parse
 import csv
 
+# ---------------------------
+# CONFIG (Deployment only)
+# ---------------------------
 HOST = "https://smart-qr-based-attendance-system.streamlit.app"
-QR_REFRESH = 1
-TOKEN_WINDOW = 30
+QR_REFRESH = 1       # seconds between QR/token refresh (1s -> smooth countdown)
+TOKEN_WINDOW = 30    # seconds token validity window
 DB_FILE = "attendance.db"
 
+# Path to uploaded image (developer-provided). Provided to you in the UI as a debug preview.
+UPLOADED_IMAGE_PATH = "/mnt/data/98d3418a-c3ca-4a53-af3c-abe56b4edda6.png"
+
+
+# ---------------------------
+# DATABASE INIT
+# ---------------------------
 @st.cache_resource
 def init_db():
     con = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -38,18 +48,26 @@ def init_db():
 
 DB = init_db()
 
+
+# ---------------------------
+# HELPERS
+# ---------------------------
 def now_int():
     return int(time.time())
 
 def now_ist_struct():
-    # UTC +5:30 for IST
+    # Convert current UTC epoch to IST struct_time (UTC +5:30)
     ist_offset = 5 * 3600 + 30 * 60
     return time.localtime(now_int() + ist_offset)
 
 def format_session_unique(base_name):
+    """
+    Format unique session name as:
+      <base>_YYYYMMDD_HHMM  (IST)
+    """
     base = base_name.strip() or "Session"
     t = now_ist_struct()
-    suffix = time.strftime("%Y%m%d_%H%M", t) # base_YYYYMMDD_HHMM
+    suffix = time.strftime("%Y%m%d_%H%M", t)
     return f"{base}_{suffix}"
 
 def current_interval():
@@ -107,6 +125,7 @@ def session_active(name):
     return bool(row and row[0] and row[1] == 0)
 
 def start_session(unique_name):
+    """Insert session row (unique_name already includes date/time)."""
     cur = DB.cursor()
     cur.execute("""
         INSERT OR REPLACE INTO sessions (id, name, started, ended)
@@ -132,15 +151,20 @@ def record_attendance(session_name, reg_no, token, token_ts):
     return True, "Attendance marked."
 
 def fetch_attendance(session_name):
+    """
+    Return rows with IST converted timestamp.
+    SQLite datetime(..., 'unixepoch', '+5 hours', '30 minutes') converts UTC->IST.
+    """
     cur = DB.cursor()
     cur.execute("""
         SELECT reg_no, datetime(submit_ts, 'unixepoch', '+5 hours', '30 minutes')
         FROM attendance
         WHERE session_name=?
         ORDER BY submit_ts
-    """, (session_name,)) # datetime to convert UTC to IST
+    """, (session_name,))
     return cur.fetchall()
 
+# Helper to unwrap st.query_params values (Streamlit returns lists)
 def get_param(params, name, default=""):
     val = params.get(name, default)
     if isinstance(val, list):
@@ -149,6 +173,10 @@ def get_param(params, name, default=""):
         return val[0]
     return val
 
+
+# ---------------------------
+# SESSION STATE SETUP
+# ---------------------------
 if "session_started" not in st.session_state:
     st.session_state.session_started = False
 
@@ -168,6 +196,10 @@ if "last_session_name" not in st.session_state:
 if "notification" not in st.session_state:
     st.session_state.notification = None
 
+# Student-side submit lock (per browser)
+if "submitted_once" not in st.session_state:
+    st.session_state.submitted_once = False
+
 
 def show_notification(msg, duration_s=3):
     """Set a transient notification to appear top-right for duration_s seconds."""
@@ -183,7 +215,7 @@ def render_notification():
         # expired -> clear
         st.session_state.notification = None
         return
-    # render a small top-right fixed box using HTML/CSS
+    # render a small top-right fixed box via HTML/CSS
     escaped = n["msg"].replace("'", "\\'")
     html = f"""
     <div style="
@@ -196,13 +228,20 @@ def render_notification():
     st.markdown(html, unsafe_allow_html=True)
 
 
+# ---------------------------
+# STREAMLIT ROUTING / UI
+# ---------------------------
 st.set_page_config(page_title="QR Attendance", layout="centered")
 params = st.query_params
 mode = get_param(params, "mode", "teacher")
 
+# Render notification at top of page (so it appears on both teacher/student views)
 render_notification()
 
-# teacher dashboard
+
+# ---------------------------
+# TEACHER VIEW
+# ---------------------------
 if mode == "teacher":
     st.title("Teacher Dashboard — QR Attendance")
 
@@ -235,7 +274,7 @@ if mode == "teacher":
                 st.session_state.session_end_ts = None
             # show transient popup
             show_notification("Session started.")
-            # rerun to update UI immediately (button click already triggers rerun)
+            # no need to explicit rerun here; button click triggers rerun
 
     if col2.button("End"):
         # if there is a running session, end it
@@ -248,7 +287,7 @@ if mode == "teacher":
             st.session_state.running_session_name = ""
             st.session_state.running_session_display = ""
             show_notification("Session ended.")
-            # rerun will happen due to button click
+            # button click triggers rerun
 
     # If timer expired, end the session automatically
     if st.session_state.session_started and st.session_state.session_end_ts:
@@ -262,13 +301,21 @@ if mode == "teacher":
             st.session_state.running_session_display = ""
             show_notification("Session auto-ended (timer).")
 
-      # Check DB active state (in case another tab ended it)
+    # Optional debug preview of uploaded image
+    if UPLOADED_IMAGE_PATH:
+        if st.sidebar.checkbox("Show last uploaded image (debug)", value=False):
+            try:
+                st.image(UPLOADED_IMAGE_PATH, caption="Last uploaded image (local)")
+            except Exception:
+                st.sidebar.warning("Could not load uploaded image from path.")
+
+    # Check DB active state (in case another tab ended it)
     is_active_db = session_active(st.session_state.running_session_name) if st.session_state.running_session_name else False
     is_active_local = st.session_state.session_started and bool(st.session_state.running_session_name)
 
     # Active banner (markdown to avoid flashing)
     if is_active_db and is_active_local:
-        st.markdown(f"### Session **{st.session_state.running_session_name}** is active")
+        st.markdown(f"### 🟢 Session **{st.session_state.running_session_name}** is active")
         if st.session_state.session_end_ts:
             remaining = st.session_state.session_end_ts - now_int()
             if remaining < 0:
@@ -277,7 +324,9 @@ if mode == "teacher":
             secs = remaining % 60
             st.markdown(f"**Time left:** {mins}m {secs}s")
 
-        # QR generation
+        # QR generation using a single placeholder slot
+        qr_slot = st.empty()  # placeholder to update/replace in-place
+
         interval = current_interval()
         token = make_token(st.session_state.running_session_name, interval)
         query = {
@@ -287,9 +336,13 @@ if mode == "teacher":
         }
         qr_url = HOST + "/?" + urllib.parse.urlencode(query)
         img_buf = generate_qr_image(qr_url)
-        st.image(img_buf, caption="Scan to mark attendance")
 
-        # refresh QR & countdown
+        with qr_slot:
+            st.image(img_buf, caption="Scan to mark attendance")
+
+        st.caption("QR updates while the session is active.")
+
+        # refresh QR & countdown AFTER rendering QR into the placeholder
         time.sleep(QR_REFRESH)
         st.rerun()
 
@@ -321,6 +374,10 @@ if mode == "teacher":
                     mime="text/csv"
                 )
 
+
+# ---------------------------
+# STUDENT VIEW (QR only)
+# ---------------------------
 elif mode == "mark":
     st.title("Mark Attendance")
 
@@ -339,16 +396,13 @@ elif mode == "mark":
     st.info(f"Session: {session_name}")
 
     # Prevent multiple submissions from same device/browser
-    if "submitted_once" not in st.session_state:
-        st.session_state.submitted_once = False
-    
     if st.session_state.submitted_once:
-        st.error("You have already recorded a registration number for this session.")
+        st.success("Your attendance is already recorded ✔")
     else:
         with st.form("attend"):
             reg = st.text_input("Registration Number")
             sub = st.form_submit_button("Submit")
-    
+
         if sub:
             if not reg.strip():
                 st.error("Please enter registration number.")
@@ -356,6 +410,6 @@ elif mode == "mark":
                 ok, msg = record_attendance(session_name, reg.strip(), token, token_ts)
                 if ok:
                     st.session_state.submitted_once = True
-                    st.success("Attendance Recorded")
+                    st.success("Attendance Recorded ✔")
                 else:
                     st.error(msg)
