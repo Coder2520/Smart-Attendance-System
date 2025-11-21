@@ -5,17 +5,17 @@ import urllib.parse
 import csv
 from io import StringIO
 
-# ---------------------------------------
+# ---------------------------------------------------
 # CONFIG
-# ---------------------------------------
+# ---------------------------------------------------
 HOST = "https://smart-qr-based-attendance-system.streamlit.app"
-QR_REFRESH = 1
-TOKEN_WINDOW = 30
+QR_REFRESH = 1            # seconds (client-side in JS)
+TOKEN_WINDOW = 30         # seconds
 DB_FILE = "attendance.db"
 
-# ---------------------------------------
+# ---------------------------------------------------
 # DATABASE INIT
-# ---------------------------------------
+# ---------------------------------------------------
 @st.cache_resource
 def init_db():
     con = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -40,23 +40,25 @@ def init_db():
             submit_ts INTEGER
         )
     """)
+
     con.commit()
     return con
 
 DB = init_db()
 
-# ---------------------------------------
+# ---------------------------------------------------
 # HELPERS
-# ---------------------------------------
+# ---------------------------------------------------
 def now_int():
     return int(time.time())
 
 def now_ist_struct():
-    ist_offset = 5*3600 + 30*60
-    return time.localtime(now_int() + ist_offset)
+    # IST = UTC + 5:30
+    offset = 5 * 3600 + 30 * 60
+    return time.localtime(now_int() + offset)
 
-def format_session_unique(base):
-    base = base.strip() or "Session"
+def format_session_unique(base_name):
+    base = base_name.strip() or "Session"
     t = now_ist_struct()
     suffix = time.strftime("%Y%m%d_%H%M", t)
     return f"{base}_{suffix}"
@@ -64,14 +66,14 @@ def format_session_unique(base):
 def current_interval():
     return now_int() // QR_REFRESH
 
-def make_token(session, interval):
-    return f"{session}|{interval}"
+def make_token(session_name, interval):
+    return f"{session_name}|{interval}"
 
 def token_valid(token):
     try:
         parts = token.split("|")
         if len(parts) != 2:
-            return False, None, "Invalid QR token."
+            return False, None, "Invalid token."
 
         session_name = parts[0]
         interval = int(parts[1])
@@ -83,37 +85,37 @@ def token_valid(token):
 
         cur = DB.cursor()
         cur.execute("SELECT ended FROM sessions WHERE name=?", (session_name,))
-        r = cur.fetchone()
+        row = cur.fetchone()
 
-        if not r:
+        if not row:
             return False, None, "Session not found."
-        if r[0] != 0:
-            return False, None, "Session ended."
+        if row[0] != 0:
+            return False, None, "Session has ended."
 
         return True, token_ts, None
 
     except:
         return False, None, "Invalid token."
 
-def session_active(name):
-    if not name:
+def session_active(session_name):
+    if not session_name:
         return False
     cur = DB.cursor()
-    cur.execute("SELECT started, ended FROM sessions WHERE name=?", (name,))
-    r = cur.fetchone()
-    return bool(r and r[0] and r[1]==0)
+    cur.execute("SELECT started, ended FROM sessions WHERE name=?", (session_name,))
+    row = cur.fetchone()
+    return bool(row and row[0] and row[1] == 0)
 
-def start_session(name):
+def start_session(unique_name):
     cur = DB.cursor()
     cur.execute("""
         INSERT OR REPLACE INTO sessions (id, name, started, ended)
         VALUES ((SELECT id FROM sessions WHERE name=?), ?, ?, 0)
-    """, (name, name, now_int()))
+    """, (unique_name, unique_name, now_int()))
     DB.commit()
 
-def end_session(name):
+def end_session(session_name):
     cur = DB.cursor()
-    cur.execute("UPDATE sessions SET ended=? WHERE name=?", (now_int(), name))
+    cur.execute("UPDATE sessions SET ended=? WHERE name=?", (now_int(), session_name))
     DB.commit()
 
 def record_attendance(session, reg, token, token_ts):
@@ -129,14 +131,14 @@ def record_attendance(session, reg, token, token_ts):
     DB.commit()
     return True, "Attendance Recorded."
 
-def fetch_attendance(name):
+def fetch_attendance(session):
     cur = DB.cursor()
     cur.execute("""
         SELECT reg_no, datetime(submit_ts,'unixepoch','+5 hours','30 minutes')
         FROM attendance
         WHERE session_name=?
         ORDER BY submit_ts
-    """, (name,))
+    """, (session,))
     return cur.fetchall()
 
 def get_param(params, key, default=""):
@@ -145,9 +147,9 @@ def get_param(params, key, default=""):
         return v[0] if v else default
     return v
 
-# ---------------------------------------
+# ---------------------------------------------------
 # SESSION STATE
-# ---------------------------------------
+# ---------------------------------------------------
 if "running_session" not in st.session_state:
     st.session_state.running_session = ""
 
@@ -160,7 +162,7 @@ if "last_session" not in st.session_state:
 if "notification" not in st.session_state:
     st.session_state.notification = None
 
-
+# Notification functions
 def notify(msg, dur=3):
     st.session_state.notification = {"msg": msg, "ts": now_int(), "dur": dur}
 
@@ -176,39 +178,41 @@ def render_notify():
     st.markdown(
         f"""
         <div style="
-            position:fixed;top:20px;right:20px;z-index:9999;
-            background:#0f5132;color:white;
-            padding:10px 14px;border-radius:8px;
-            box-shadow:0 4px 10px rgba(0,0,0,0.3);
-            font-weight:600;">
+            position:fixed; top:20px; right:20px; z-index:9999;
+            background:#0f5132; color:white;
+            padding:10px 15px; border-radius:8px;
+            box-shadow:0 4px 10px rgba(0,0,0,0.3);">
             {msg}
         </div>
         """,
         unsafe_allow_html=True
     )
 
-
-# ---------------------------------------
-# ROUTER
-# ---------------------------------------
+# ---------------------------------------------------
+# ROUTING
+# ---------------------------------------------------
 st.set_page_config(page_title="QR Attendance", layout="centered")
 params = st.query_params
 mode = get_param(params, "mode", "teacher")
 
 render_notify()
 
-# ---------------------------------------
+# ---------------------------------------------------
 # TEACHER VIEW
-# ---------------------------------------
+# ---------------------------------------------------
 if mode == "teacher":
     st.title("Teacher Dashboard — QR Attendance")
 
-    st.sidebar.header("Session Control")
+    st.sidebar.header("Session Controls")
 
-    base = st.sidebar.text_input("Session Name (base)", value=st.session_state.running_display or "Session1")
+    base = st.sidebar.text_input(
+        "Session Name (base)",
+        value=st.session_state.running_display or "Session1"
+    )
 
     c1, c2 = st.sidebar.columns(2)
 
+    # START session
     if c1.button("Start"):
         unique = format_session_unique(base)
         start_session(unique)
@@ -217,6 +221,7 @@ if mode == "teacher":
         st.session_state.last_session = unique
         notify("Session started.")
 
+    # END session
     if c2.button("End"):
         rn = st.session_state.running_session
         if rn:
@@ -228,51 +233,56 @@ if mode == "teacher":
 
     rn = st.session_state.running_session
 
+    # ACTIVE SESSION
     if session_active(rn):
-        st.markdown(f"### Session **{rn}** is active")
+        st.markdown(f"### 🟢 Session **{rn}** is active")
 
-        # -----------------------------
-        # NON-FLICKERING QR AREA (JS)
-        # -----------------------------
-        st.markdown(
-            f"""
-            <div id="qr_area">
-                <img id="qr_img" src="" style="width:260px;border-radius:8px;">
-                <div style="color:#6c757d;margin-top:6px;">Scan to mark attendance</div>
-            </div>
+        # ---------------------------------------------------
+        # NON-FLICKERING QR VIA JS IN st.components.html
+        # ---------------------------------------------------
+        qr_html = f"""
+        <div id="qr_area" style="text-align:center;">
+            <img id="qr_img" src="" style="width:260px;border-radius:8px;">
+            <div style="color:#6c757d;margin-top:6px;">Scan to mark attendance</div>
+        </div>
 
-            <script>
-            const host = "{HOST}";
-            const session = "{rn}";
-            const refresh = {QR_REFRESH} * 1000;
+        <script>
+        const host = "{HOST}";
+        const session = "{rn}";
+        const refresh = {QR_REFRESH} * 1000;
 
-            function updateQR() {{
-                const unix = Math.floor(Date.now()/1000);
-                const interval = Math.floor(unix / {QR_REFRESH});
-                const token = session + "|" + interval;
-                const url = host + "/?mode=mark&session=" + encodeURIComponent(session) + "&token=" + encodeURIComponent(token);
+        function updateQR() {{
+            const unix = Math.floor(Date.now()/1000);
+            const interval = Math.floor(unix / {QR_REFRESH});
+            const token = session + "|" + interval;
 
-                const apiURL = "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=" + encodeURIComponent(url);
-                const img = document.getElementById("qr_img");
-                if (img) {{
-                    img.src = apiURL + "&t=" + Date.now();
-                }}
+            const url = host + "/?mode=mark&session="
+                       + encodeURIComponent(session)
+                       + "&token=" + encodeURIComponent(token);
+
+            const apiURL = "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data="
+                           + encodeURIComponent(url);
+
+            const img = document.getElementById("qr_img");
+            if (img) {{
+                img.src = apiURL + "&t=" + Date.now();
             }}
+        }}
 
-            updateQR();
-            if (window.qrInterval) clearInterval(window.qrInterval);
-            window.qrInterval = setInterval(updateQR, refresh);
-            </script>
-            """,
-            unsafe_allow_html=True
-        )
+        updateQR();
+        if (window.qrInterval) clearInterval(window.qrInterval);
+        window.qrInterval = setInterval(updateQR, refresh);
+        </script>
+        """
+
+        st.components.v1.html(qr_html, height=350)
 
     else:
         st.info("Start a session to display the QR.")
 
-    # -----------------------------
-    # CSV DOWNLOAD
-    # -----------------------------
+    # ---------------------------------------------------
+    # CSV SECTION
+    # ---------------------------------------------------
     st.subheader("Download Attendance")
 
     dls = st.text_input("Session to download", value=st.session_state.last_session)
@@ -287,18 +297,17 @@ if mode == "teacher":
             w.writerow(["reg_no", "session", "timestamp (IST)"])
             for reg, ts in rows:
                 w.writerow([reg, dls.strip(), f"'{ts}'"])
-            csv_data = buf.getvalue().encode()
 
             st.download_button(
                 "Download CSV",
-                csv_data,
-                file_name=f"attendance_{dls}.csv",
+                buf.getvalue().encode(),
+                file_name=f"attendance_{dls.strip()}.csv",
                 mime="text/csv"
             )
 
-# ---------------------------------------
+# ---------------------------------------------------
 # STUDENT VIEW
-# ---------------------------------------
+# ---------------------------------------------------
 elif mode == "mark":
     st.title("Mark Attendance")
 
