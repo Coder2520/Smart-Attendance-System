@@ -6,14 +6,14 @@ from io import BytesIO, StringIO
 import urllib.parse
 import csv
 
-# ---------------------------
-# CONFIG (Deployment only)
-# ---------------------------
 HOST = "https://smart-qr-based-attendance-system.streamlit.app"
-QR_REFRESH = 1       # seconds between QR/token refresh (1s -> smooth countdown)
-TOKEN_WINDOW = 30    # seconds token validity window
+QR_REFRESH = 1
+TOKEN_WINDOW = 30
 DB_FILE = "attendance.db"
 
+# ---------------------------
+# DATABASE INIT
+# ---------------------------
 @st.cache_resource
 def init_db():
     con = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -254,22 +254,18 @@ if mode == "teacher":
                 st.session_state.session_end_ts = now_int() + int(timer_minutes) * 60
             else:
                 st.session_state.session_end_ts = None
-            # show transient popup
+
             show_notification("Session started.")
-            # no need to explicit rerun here; button click triggers rerun
 
     if col2.button("End"):
-        # if there is a running session, end it
         if st.session_state.running_session_name:
             end_session(st.session_state.running_session_name)
             st.session_state.session_started = False
             st.session_state.session_end_ts = None
-            # keep last_session_name so main page can use it to download CSV
             st.session_state.last_session_name = st.session_state.running_session_name
             st.session_state.running_session_name = ""
             st.session_state.running_session_display = ""
             show_notification("Session ended.")
-            # button click triggers rerun
 
     # If timer expired, end the session automatically
     if st.session_state.session_started and st.session_state.session_end_ts:
@@ -314,14 +310,12 @@ if mode == "teacher":
         with qr_slot:
             st.image(img_buf, caption="Scan to mark attendance")
 
-        # refresh QR & countdown AFTER rendering QR into the placeholder
         time.sleep(QR_REFRESH)
         st.rerun()
 
     else:
         st.info("Start a session to display the QR.")
 
-    # CSV section: show when session not active. Use last_session_name to pre-fill
     st.subheader("Download Attendance")
     default_dl = st.session_state.last_session_name or ""
     dls = st.text_input("Session to download (exact unique name)", value=default_dl)
@@ -337,7 +331,7 @@ if mode == "teacher":
                 writer = csv.writer(buf)
                 writer.writerow(["reg_no", "session_name", "timestamp (human)"])
                 for reg, ts in rows:
-                    writer.writerow([reg, dls.strip(), f"'{ts}'"])  # force Excel text
+                    writer.writerow([reg, dls.strip(), f"'{ts}'"])
                 csv_data = buf.getvalue().encode("utf-8")
                 st.download_button(
                     "Download CSV",
@@ -364,7 +358,6 @@ elif mode == "mark":
 
     st.info(f"Session: {session_name}")
 
-    # Prevent multiple submissions from same device/browser
     if st.session_state.submitted_once:
         st.success("Your attendance is already recorded ✔")
     else:
