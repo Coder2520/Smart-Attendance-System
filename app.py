@@ -6,21 +6,11 @@ from io import BytesIO, StringIO
 import urllib.parse
 import csv
 
-# ---------------------------
-# CONFIG (Deployment only)
-# ---------------------------
 HOST = "https://smart-qr-based-attendance-system.streamlit.app"
-QR_REFRESH = 1       # seconds between QR/token refresh (1s -> smooth countdown)
-TOKEN_WINDOW = 30    # seconds token validity window
+QR_REFRESH = 1
+TOKEN_WINDOW = 30
 DB_FILE = "attendance.db"
 
-# Path to uploaded image (developer-provided). Provided to you in the UI as a debug preview.
-UPLOADED_IMAGE_PATH = "/mnt/data/98d3418a-c3ca-4a53-af3c-abe56b4edda6.png"
-
-
-# ---------------------------
-# DATABASE INIT
-# ---------------------------
 @st.cache_resource
 def init_db():
     con = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -48,26 +38,18 @@ def init_db():
 
 DB = init_db()
 
-
-# ---------------------------
-# HELPERS
-# ---------------------------
 def now_int():
     return int(time.time())
 
 def now_ist_struct():
-    # Convert current UTC epoch to IST struct_time (UTC +5:30)
+    # UTC +5:30 for IST
     ist_offset = 5 * 3600 + 30 * 60
     return time.localtime(now_int() + ist_offset)
 
 def format_session_unique(base_name):
-    """
-    Format unique session name as:
-      <base>_YYYYMMDD_HHMM  (IST)
-    """
     base = base_name.strip() or "Session"
     t = now_ist_struct()
-    suffix = time.strftime("%Y%m%d_%H%M", t)
+    suffix = time.strftime("%Y%m%d_%H%M", t) # base_YYYYMMDD_HHMM
     return f"{base}_{suffix}"
 
 def current_interval():
@@ -150,20 +132,15 @@ def record_attendance(session_name, reg_no, token, token_ts):
     return True, "Attendance marked."
 
 def fetch_attendance(session_name):
-    """
-    Return rows with IST converted timestamp.
-    SQLite datetime(..., 'unixepoch', '+5 hours', '30 minutes') converts UTC->IST.
-    """
     cur = DB.cursor()
     cur.execute("""
         SELECT reg_no, datetime(submit_ts, 'unixepoch', '+5 hours', '30 minutes')
         FROM attendance
         WHERE session_name=?
         ORDER BY submit_ts
-    """, (session_name,))
+    """, (session_name,)) # datetime to convert UTC to IST
     return cur.fetchall()
 
-# Helper to unwrap st.query_params values (Streamlit returns lists)
 def get_param(params, name, default=""):
     val = params.get(name, default)
     if isinstance(val, list):
@@ -172,10 +149,6 @@ def get_param(params, name, default=""):
         return val[0]
     return val
 
-
-# ---------------------------
-# SESSION STATE SETUP
-# ---------------------------
 if "session_started" not in st.session_state:
     st.session_state.session_started = False
 
@@ -210,7 +183,7 @@ def render_notification():
         # expired -> clear
         st.session_state.notification = None
         return
-    # render a small top-right fixed box via HTML/CSS
+    # render a small top-right fixed box using HTML/CSS
     escaped = n["msg"].replace("'", "\\'")
     html = f"""
     <div style="
@@ -223,20 +196,13 @@ def render_notification():
     st.markdown(html, unsafe_allow_html=True)
 
 
-# ---------------------------
-# STREAMLIT ROUTING / UI
-# ---------------------------
 st.set_page_config(page_title="QR Attendance", layout="centered")
 params = st.query_params
 mode = get_param(params, "mode", "teacher")
 
-# Render notification at top of page (so it appears on both teacher/student views)
 render_notification()
 
-
-# ---------------------------
-# TEACHER VIEW
-# ---------------------------
+# teacher dashboard
 if mode == "teacher":
     st.title("Teacher Dashboard — QR Attendance")
 
@@ -296,21 +262,13 @@ if mode == "teacher":
             st.session_state.running_session_display = ""
             show_notification("Session auto-ended (timer).")
 
-    # Optional debug preview of uploaded image
-    if UPLOADED_IMAGE_PATH:
-        if st.sidebar.checkbox("Show last uploaded image (debug)", value=False):
-            try:
-                st.image(UPLOADED_IMAGE_PATH, caption="Last uploaded image (local)")
-            except Exception:
-                st.sidebar.warning("Could not load uploaded image from path.")
-
-    # Check DB active state (in case another tab ended it)
+      # Check DB active state (in case another tab ended it)
     is_active_db = session_active(st.session_state.running_session_name) if st.session_state.running_session_name else False
     is_active_local = st.session_state.session_started and bool(st.session_state.running_session_name)
 
     # Active banner (markdown to avoid flashing)
     if is_active_db and is_active_local:
-        st.markdown(f"### 🟢 Session **{st.session_state.running_session_name}** is active")
+        st.markdown(f"### Session **{st.session_state.running_session_name}** is active")
         if st.session_state.session_end_ts:
             remaining = st.session_state.session_end_ts - now_int()
             if remaining < 0:
@@ -330,7 +288,6 @@ if mode == "teacher":
         qr_url = HOST + "/?" + urllib.parse.urlencode(query)
         img_buf = generate_qr_image(qr_url)
         st.image(img_buf, caption="Scan to mark attendance")
-        st.caption("QR updates while the session is active.")
 
         # refresh QR & countdown
         time.sleep(QR_REFRESH)
@@ -386,7 +343,7 @@ elif mode == "mark":
         st.session_state.submitted_once = False
     
     if st.session_state.submitted_once:
-        st.success("Your attendance is already recorded ✔")
+        st.error("You have already recorded a registration number for this session.")
     else:
         with st.form("attend"):
             reg = st.text_input("Registration Number")
@@ -399,6 +356,6 @@ elif mode == "mark":
                 ok, msg = record_attendance(session_name, reg.strip(), token, token_ts)
                 if ok:
                     st.session_state.submitted_once = True
-                    st.success("Attendance Recorded ✔")
+                    st.success("Attendance Recorded")
                 else:
                     st.error(msg)
