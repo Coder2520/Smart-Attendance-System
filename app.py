@@ -6,10 +6,17 @@ from io import BytesIO, StringIO
 import urllib.parse
 import csv
 
+# ---------------------------
+# CONFIG (Deployment only)
+# ---------------------------
 HOST = "https://smart-qr-based-attendance-system.streamlit.app"
-QR_REFRESH = 1
-TOKEN_WINDOW = 30
+QR_REFRESH = 1       # seconds between QR/token refresh
+TOKEN_WINDOW = 30    # seconds token validity window
 DB_FILE = "attendance.db"
+
+# Debug image path (uploaded)
+UPLOADED_IMAGE_PATH = "/mnt/data/6d79616d-7f25-4f6a-b24a-ccd1503aec26.png"
+
 
 # ---------------------------
 # DATABASE INIT
@@ -41,6 +48,10 @@ def init_db():
 
 DB = init_db()
 
+
+# ---------------------------
+# HELPERS
+# ---------------------------
 def now_int():
     return int(time.time())
 
@@ -96,7 +107,7 @@ def generate_qr_image(url):
     qr = qrcode.QRCode(
         version=1,
         error_correction=qrcode.constants.ERROR_CORRECT_L,
-        box_size=6,
+        box_size=8,    # slightly larger for phone scanning
         border=2,
     )
     qr.add_data(url)
@@ -162,6 +173,10 @@ def get_param(params, name, default=""):
         return val[0]
     return val
 
+
+# ---------------------------
+# SESSION STATE SETUP
+# ---------------------------
 if "session_started" not in st.session_state:
     st.session_state.session_started = False
 
@@ -223,7 +238,10 @@ mode = get_param(params, "mode", "teacher")
 # Render notification at top of page (so it appears on both teacher/student views)
 render_notification()
 
-# teacher dashboard
+
+# ---------------------------
+# TEACHER VIEW
+# ---------------------------
 if mode == "teacher":
     st.title("Teacher Dashboard — QR Attendance")
 
@@ -232,7 +250,7 @@ if mode == "teacher":
     # Sidebar: base name input
     base_session_name = st.sidebar.text_input("Session Name (base)", value=st.session_state.running_session_display or "Session1")
 
-    # Sidebar: label must just say "Timer" with a help tooltip
+    # Sidebar: Timer label with tooltip
     timer_minutes = st.sidebar.number_input(
         "Timer",
         min_value=0,
@@ -279,13 +297,21 @@ if mode == "teacher":
             st.session_state.running_session_display = ""
             show_notification("Session auto-ended (timer).")
 
+    # Optional debug preview of uploaded image
+    if UPLOADED_IMAGE_PATH:
+        if st.sidebar.checkbox("Show last uploaded image (debug)", value=False):
+            try:
+                st.image(UPLOADED_IMAGE_PATH, caption="Last uploaded image (local)")
+            except Exception:
+                st.sidebar.warning("Could not load uploaded image from path.")
+
     # Check DB active state (in case another tab ended it)
     is_active_db = session_active(st.session_state.running_session_name) if st.session_state.running_session_name else False
     is_active_local = st.session_state.session_started and bool(st.session_state.running_session_name)
 
     # Active banner (markdown to avoid flashing)
     if is_active_db and is_active_local:
-        st.markdown(f"### Session **{st.session_state.running_session_name}** is active")
+        st.markdown(f"### 🟢 Session **{st.session_state.running_session_name}** is active")
         if st.session_state.session_end_ts:
             remaining = st.session_state.session_end_ts - now_int()
             if remaining < 0:
@@ -294,9 +320,10 @@ if mode == "teacher":
             secs = remaining % 60
             st.markdown(f"**Time left:** {mins}m {secs}s")
 
-        # QR generation using a single placeholder slot
+        # --- QR: single placeholder + controlled live-update loop (safe) ---
         qr_slot = st.empty()  # placeholder to update/replace in-place
 
+        # Render first QR immediately
         interval = current_interval()
         token = make_token(st.session_state.running_session_name, interval)
         query = {
@@ -310,12 +337,52 @@ if mode == "teacher":
         with qr_slot:
             st.image(img_buf, caption="Scan to mark attendance")
 
-        time.sleep(QR_REFRESH)
-        st.rerun()
+        st.caption("QR updates while the session is active.")
+
+        # Controlled loop: update in-place, exit when session ends (safe)
+        # Note: loop runs on server; it checks DB/flags each iteration and stops quickly if session ended.
+        # This loop avoids st.rerun() and updates the placeholder in-place to prevent flicker/duplicates.
+        loop_start = now_int()
+        while True:
+            time.sleep(QR_REFRESH)
+
+            # break if session was ended elsewhere (DB)
+            if not session_active(st.session_state.running_session_name):
+                break
+
+            # If local timer-end was triggered, break too
+            if st.session_state.session_end_ts and now_int() >= st.session_state.session_end_ts:
+                # ensure DB reflect end
+                if st.session_state.running_session_name:
+                    end_session(st.session_state.running_session_name)
+                break
+
+            # prepare new token & image and replace content in placeholder
+            interval = current_interval()
+            token = make_token(st.session_state.running_session_name, interval)
+            query = {
+                "mode": "mark",
+                "session": st.session_state.running_session_name,
+                "token": token
+            }
+            qr_url = HOST + "/?" + urllib.parse.urlencode(query)
+            img_buf = generate_qr_image(qr_url)
+
+            # update in-place
+            with qr_slot:
+                st.image(img_buf, caption="Scan to mark attendance")
+
+            # If teacher clicked End in another tab or something updated session_started flag, check and break
+            if not st.session_state.session_started:
+                break
+
+        # end of loop — placeholder will remain displaying the last QR (or disappear when session ends)
+        # If session ended, we leave the active block and the page renders the CSV section below.
 
     else:
         st.info("Start a session to display the QR.")
 
+    # CSV section: show when session not active. Use last_session_name to pre-fill
     st.subheader("Download Attendance")
     default_dl = st.session_state.last_session_name or ""
     dls = st.text_input("Session to download (exact unique name)", value=default_dl)
@@ -331,7 +398,7 @@ if mode == "teacher":
                 writer = csv.writer(buf)
                 writer.writerow(["reg_no", "session_name", "timestamp (human)"])
                 for reg, ts in rows:
-                    writer.writerow([reg, dls.strip(), f"'{ts}'"])
+                    writer.writerow([reg, dls.strip(), f"'{ts}'"])  # force Excel text
                 csv_data = buf.getvalue().encode("utf-8")
                 st.download_button(
                     "Download CSV",
@@ -340,7 +407,10 @@ if mode == "teacher":
                     mime="text/csv"
                 )
 
-# student view
+
+# ---------------------------
+# STUDENT VIEW (QR only)
+# ---------------------------
 elif mode == "mark":
     st.title("Mark Attendance")
 
@@ -358,8 +428,9 @@ elif mode == "mark":
 
     st.info(f"Session: {session_name}")
 
+    # Prevent multiple submissions from same device/browser
     if st.session_state.submitted_once:
-        st.error("Your attendance is already recorded for this session.")
+        st.success("Your attendance is already recorded ✔")
     else:
         with st.form("attend"):
             reg = st.text_input("Registration Number")
