@@ -283,21 +283,13 @@ if mode == "teacher":
             st.session_state.running_session_display = ""
             show_notification("Session auto-ended (timer).")
 
-    # Optional debug preview of uploaded image
-    if UPLOADED_IMAGE_PATH:
-        if st.sidebar.checkbox("Show last uploaded image (debug)", value=False):
-            try:
-                st.image(UPLOADED_IMAGE_PATH, caption="Last uploaded image (local)")
-            except Exception:
-                st.sidebar.warning("Could not load uploaded image from path.")
-
     # Check DB active state (in case another tab ended it)
     is_active_db = session_active(st.session_state.running_session_name) if st.session_state.running_session_name else False
     is_active_local = st.session_state.session_started and bool(st.session_state.running_session_name)
 
     # Active banner (markdown to avoid flashing)
     if is_active_db and is_active_local:
-        st.markdown(f"### 🟢 Session **{st.session_state.running_session_name}** is active")
+        st.markdown(f"### Session **{st.session_state.running_session_name}** is active")
         if st.session_state.session_end_ts:
             remaining = st.session_state.session_end_ts - now_int()
             if remaining < 0:
@@ -321,8 +313,6 @@ if mode == "teacher":
 
         with qr_slot:
             st.image(img_buf, caption="Scan to mark attendance")
-
-        st.caption("QR updates while the session is active.")
 
         # refresh QR & countdown AFTER rendering QR into the placeholder
         time.sleep(QR_REFRESH)
