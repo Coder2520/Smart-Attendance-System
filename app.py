@@ -2,17 +2,16 @@ import streamlit as st
 import sqlite3
 import time
 import qrcode
-from io import BytesIO
+from io import BytesIO, StringIO
 import urllib.parse
 import csv
-import os
 
 # ---------------------------------------------
-# CONFIG
+# CONFIG (DEPLOYMENT ONLY)
 # ---------------------------------------------
-HOST = ""       # Optional: default base URL. You can override from the UI.
-QR_REFRESH = 2  # seconds
-TOKEN_WINDOW = 30  # token validity window
+HOST = "https://smart-qr-based-attendance-system.streamlit.app"  # YOUR DEPLOYED URL
+QR_REFRESH = 2       # seconds
+TOKEN_WINDOW = 30    # token validity window
 DB_FILE = "attendance.db"
 
 
@@ -132,7 +131,6 @@ def end_session(name):
 def record_attendance(session_name, reg_no, token, token_ts):
     cur = DB.cursor()
 
-    # prevent duplicates
     cur.execute("SELECT id FROM attendance WHERE session_name=? AND reg_no=?", 
                 (session_name, reg_no))
     if cur.fetchone():
@@ -157,7 +155,7 @@ def fetch_attendance(session_name):
     return cur.fetchall()
 
 
-# Helper to unwrap st.query_params values (which are lists)
+# Helper to unwrap st.query_params values (Streamlit returns lists)
 def get_param(params, name, default=""):
     val = params.get(name, default)
     if isinstance(val, list):
@@ -175,7 +173,6 @@ st.set_page_config(page_title="QR Attendance", layout="centered")
 params = st.query_params
 mode = get_param(params, "mode", "teacher")
 
-# Ensure session_state flag exists
 if "session_started" not in st.session_state:
     st.session_state.session_started = False
 
@@ -187,13 +184,6 @@ if mode == "teacher":
     st.title("Teacher Dashboard — QR Attendance")
 
     st.sidebar.header("Session Controls")
-
-    # Base URL for QR code (so scanning from phone works)
-    base_url = st.sidebar.text_input(
-        "App Base URL (for QR)",
-        value=HOST,
-        help="Full URL to this app, e.g. https://your-app.streamlit.app"
-    )
 
     session_name = st.sidebar.text_input("Session Name", value="Session1")
 
@@ -210,7 +200,7 @@ if mode == "teacher":
             st.session_state.session_started = False
             st.sidebar.success(f"Session '{session_name}' ended.")
 
-    # Show QR when session active AND explicitly started this run
+    # Show QR only if session is active and started
     if session_name and session_active(session_name) and st.session_state.session_started:
         st.success(f"Session '{session_name}' is ACTIVE")
 
@@ -223,17 +213,12 @@ if mode == "teacher":
             "token": token
         }
 
-        # Build full URL for QR scanning
-        if base_url.strip():
-            qr_url = base_url.rstrip("/") + "/?" + urllib.parse.urlencode(query)
-        else:
-            # Fallback: relative URL (only works if scanned on same device/browser)
-            qr_url = "/?" + urllib.parse.urlencode(query)
+        # Always use your deployed domain
+        qr_url = HOST + "/?" + urllib.parse.urlencode(query)
 
         img_buf = generate_qr_image(qr_url)
 
         st.image(img_buf, caption="Scan to mark attendance")
-        # Removed st.code(qr_url, language="text") to avoid showing random-looking text
         st.caption("QR updates every 2 seconds while the session is active.")
 
         time.sleep(QR_REFRESH)
@@ -251,23 +236,25 @@ if mode == "teacher":
         if not rows:
             st.warning("No data found for this session.")
         else:
-            buf = BytesIO()
+            buf = StringIO()
             writer = csv.writer(buf)
             writer.writerow(["reg_no", "session_name", "timestamp (human)"])
+
             for reg, ts in rows:
                 writer.writerow([reg, dls.strip(), ts])
-            buf.seek(0)
+
+            csv_data = buf.getvalue().encode("utf-8")
 
             st.download_button(
                 "Download CSV",
-                data=buf,
+                data=csv_data,
                 file_name=f"attendance_{dls.strip()}.csv",
                 mime="text/csv"
             )
 
 
 # ---------------------------------------------
-# STUDENT VIEW (ONLY VIA QR)
+# STUDENT VIEW (QR ONLY)
 # ---------------------------------------------
 elif mode == "mark":
     st.title("Mark Attendance")
