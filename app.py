@@ -6,21 +6,11 @@ from io import BytesIO, StringIO
 import urllib.parse
 import csv
 
-# ---------------------------
-# CONFIG (Deployment only)
-# ---------------------------
 HOST = "https://smart-qr-based-attendance-system.streamlit.app"
-QR_REFRESH = 1       # seconds between QR/token refresh
-TOKEN_WINDOW = 30    # seconds token validity window
+QR_REFRESH = 1
+TOKEN_WINDOW = 30
 DB_FILE = "attendance.db"
 
-# Debug image path (uploaded)
-UPLOADED_IMAGE_PATH = "/mnt/data/6d79616d-7f25-4f6a-b24a-ccd1503aec26.png"
-
-
-# ---------------------------
-# DATABASE INIT
-# ---------------------------
 @st.cache_resource
 def init_db():
     con = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -48,10 +38,6 @@ def init_db():
 
 DB = init_db()
 
-
-# ---------------------------
-# HELPERS
-# ---------------------------
 def now_int():
     return int(time.time())
 
@@ -173,10 +159,6 @@ def get_param(params, name, default=""):
         return val[0]
     return val
 
-
-# ---------------------------
-# SESSION STATE SETUP
-# ---------------------------
 if "session_started" not in st.session_state:
     st.session_state.session_started = False
 
@@ -228,9 +210,6 @@ def render_notification():
     st.markdown(html, unsafe_allow_html=True)
 
 
-# ---------------------------
-# STREAMLIT ROUTING / UI
-# ---------------------------
 st.set_page_config(page_title="QR Attendance", layout="centered")
 params = st.query_params
 mode = get_param(params, "mode", "teacher")
@@ -238,10 +217,6 @@ mode = get_param(params, "mode", "teacher")
 # Render notification at top of page (so it appears on both teacher/student views)
 render_notification()
 
-
-# ---------------------------
-# TEACHER VIEW
-# ---------------------------
 if mode == "teacher":
     st.title("Teacher Dashboard — QR Attendance")
 
@@ -311,7 +286,7 @@ if mode == "teacher":
 
     # Active banner (markdown to avoid flashing)
     if is_active_db and is_active_local:
-        st.markdown(f"### 🟢 Session **{st.session_state.running_session_name}** is active")
+        st.markdown(f"### Session **{st.session_state.running_session_name}** is active")
         if st.session_state.session_end_ts:
             remaining = st.session_state.session_end_ts - now_int()
             if remaining < 0:
@@ -320,7 +295,6 @@ if mode == "teacher":
             secs = remaining % 60
             st.markdown(f"**Time left:** {mins}m {secs}s")
 
-        # --- QR: single placeholder + controlled live-update loop (safe) ---
         qr_slot = st.empty()  # placeholder to update/replace in-place
 
         # Render first QR immediately
@@ -407,10 +381,6 @@ if mode == "teacher":
                     mime="text/csv"
                 )
 
-
-# ---------------------------
-# STUDENT VIEW (QR only)
-# ---------------------------
 elif mode == "mark":
     st.title("Mark Attendance")
 
