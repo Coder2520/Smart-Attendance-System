@@ -6,16 +6,25 @@ from io import BytesIO, StringIO
 import urllib.parse
 import csv
 
+# ---------------------------
+# CONFIG (Deployment only)
+# ---------------------------
 HOST = "https://smart-qr-based-attendance-system.streamlit.app"
-QR_REFRESH = 2
-TOKEN_WINDOW = 30
+QR_REFRESH = 1       # seconds between QR/token refresh (1s -> smooth countdown)
+TOKEN_WINDOW = 30    # seconds token validity window
 DB_FILE = "attendance.db"
 
+# Path to uploaded image (developer-provided). Provided to you in the UI as a debug preview.
+UPLOADED_IMAGE_PATH = "/mnt/data/98d3418a-c3ca-4a53-af3c-abe56b4edda6.png"
+
+
+# ---------------------------
+# DATABASE INIT
+# ---------------------------
 @st.cache_resource
 def init_db():
     con = sqlite3.connect(DB_FILE, check_same_thread=False)
     cur = con.cursor()
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,19 +48,26 @@ def init_db():
 
 DB = init_db()
 
+
+# ---------------------------
+# HELPERS
+# ---------------------------
 def now_int():
     return int(time.time())
 
 def now_ist_struct():
-    ist_offset = 5 * 3600 + 30 * 60 # +5:30 hours
+    # Convert current UTC epoch to IST struct_time (UTC +5:30)
+    ist_offset = 5 * 3600 + 30 * 60
     return time.localtime(now_int() + ist_offset)
 
 def format_session_unique(base_name):
-    base = base_name.strip()
-    if not base:
-        base = "Session"
+    """
+    Format unique session name as:
+      <base>_YYYYMMDD_HHMM  (IST)
+    """
+    base = base_name.strip() or "Session"
     t = now_ist_struct()
-    suffix = time.strftime("%Y%m%d_%H%M", t)  #base_yyyymmdd_hhmm
+    suffix = time.strftime("%Y%m%d_%H%M", t)
     return f"{base}_{suffix}"
 
 def current_interval():
@@ -97,7 +113,6 @@ def generate_qr_image(url):
     qr.add_data(url)
     qr.make(fit=True)
     img = qr.make_image()
-
     buf = BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
@@ -110,7 +125,6 @@ def session_active(name):
     return bool(row and row[0] and row[1] == 0)
 
 def start_session(unique_name):
-    """Insert session row (unique_name already includes date/time)."""
     cur = DB.cursor()
     cur.execute("""
         INSERT OR REPLACE INTO sessions (id, name, started, ended)
@@ -158,6 +172,10 @@ def get_param(params, name, default=""):
         return val[0]
     return val
 
+
+# ---------------------------
+# SESSION STATE SETUP
+# ---------------------------
 if "session_started" not in st.session_state:
     st.session_state.session_started = False
 
@@ -165,74 +183,134 @@ if "session_end_ts" not in st.session_state:
     st.session_state.session_end_ts = None
 
 if "running_session_name" not in st.session_state:
-    st.session_state.running_session_name = ""
+    st.session_state.running_session_name = ""  # unique name (with timestamp)
 
 if "running_session_display" not in st.session_state:
-    # human-friendly name shown in UI (base name)
-    st.session_state.running_session_display = ""
+    st.session_state.running_session_display = ""  # base name shown in sidebar
 
+if "last_session_name" not in st.session_state:
+    st.session_state.last_session_name = ""  # the most recent unique name (ended or running)
+
+# Notification structure: {'msg': str, 'ts': epoch}
+if "notification" not in st.session_state:
+    st.session_state.notification = None
+
+
+def show_notification(msg, duration_s=3):
+    """Set a transient notification to appear top-right for duration_s seconds."""
+    st.session_state.notification = {"msg": msg, "ts": now_int(), "dur": duration_s}
+
+
+def render_notification():
+    n = st.session_state.get("notification")
+    if not n:
+        return
+    age = now_int() - n["ts"]
+    if age > n.get("dur", 3):
+        # expired -> clear
+        st.session_state.notification = None
+        return
+    # render a small top-right fixed box via HTML/CSS
+    escaped = n["msg"].replace("'", "\\'")
+    html = f"""
+    <div style="
+        position:fixed; top:20px; right:20px; z-index:9999;
+        background:#0f5132; color:white; padding:10px 14px; border-radius:8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.25); font-weight:600;">
+        {escaped}
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+
+# ---------------------------
+# STREAMLIT ROUTING / UI
+# ---------------------------
 st.set_page_config(page_title="QR Attendance", layout="centered")
 params = st.query_params
 mode = get_param(params, "mode", "teacher")
 
-# teacher dashboard
+# Render notification at top of page (so it appears on both teacher/student views)
+render_notification()
+
+
+# ---------------------------
+# TEACHER VIEW
+# ---------------------------
 if mode == "teacher":
     st.title("Teacher Dashboard — QR Attendance")
 
     st.sidebar.header("Session Controls")
 
+    # Sidebar: base name input
     base_session_name = st.sidebar.text_input("Session Name (base)", value=st.session_state.running_session_display or "Session1")
 
+    # Sidebar: label must just say "Timer" with a help tooltip
     timer_minutes = st.sidebar.number_input(
-        "Auto-end after (minutes, 0 = manual end)",
+        "Timer",
         min_value=0,
         value=0,
         step=1,
-        help="If > 0, session will automatically end after this many minutes."
+        help="Auto-end after this many minutes. Set 0 for manual end."
     )
 
     col1, col2 = st.sidebar.columns(2)
     if col1.button("Start"):
         if base_session_name.strip():
-            # create unique name using IST timestamp (format B)
             unique_name = format_session_unique(base_session_name)
             start_session(unique_name)
             st.session_state.session_started = True
             st.session_state.running_session_name = unique_name
             st.session_state.running_session_display = base_session_name.strip()
+            st.session_state.last_session_name = unique_name
             if timer_minutes and timer_minutes > 0:
                 st.session_state.session_end_ts = now_int() + int(timer_minutes) * 60
             else:
                 st.session_state.session_end_ts = None
-            st.sidebar.success(f"Session started as '{unique_name}'")
+            # show transient popup
+            show_notification("Session started.")
+            # rerun to update UI immediately (button click already triggers rerun)
 
     if col2.button("End"):
+        # if there is a running session, end it
         if st.session_state.running_session_name:
             end_session(st.session_state.running_session_name)
             st.session_state.session_started = False
             st.session_state.session_end_ts = None
-            st.sidebar.success(f"Session '{st.session_state.running_session_name}' ended")
-            # clear running session info so teacher can start a fresh base name
+            # keep last_session_name so main page can use it to download CSV
+            st.session_state.last_session_name = st.session_state.running_session_name
             st.session_state.running_session_name = ""
             st.session_state.running_session_display = ""
+            show_notification("Session ended.")
+            # rerun will happen due to button click
 
     # If timer expired, end the session automatically
     if st.session_state.session_started and st.session_state.session_end_ts:
         if now_int() >= st.session_state.session_end_ts:
             if st.session_state.running_session_name:
                 end_session(st.session_state.running_session_name)
+                st.session_state.last_session_name = st.session_state.running_session_name
             st.session_state.session_started = False
             st.session_state.session_end_ts = None
-            st.sidebar.info("Session auto-ended (timer reached).")
             st.session_state.running_session_name = ""
             st.session_state.running_session_display = ""
+            show_notification("Session auto-ended (timer).")
 
-    # Determine actual active state from DB (in case another tab ended it)
+    # Optional debug preview of uploaded image
+    if UPLOADED_IMAGE_PATH:
+        if st.sidebar.checkbox("Show last uploaded image (debug)", value=False):
+            try:
+                st.image(UPLOADED_IMAGE_PATH, caption="Last uploaded image (local)")
+            except Exception:
+                st.sidebar.warning("Could not load uploaded image from path.")
+
+    # Check DB active state (in case another tab ended it)
     is_active_db = session_active(st.session_state.running_session_name) if st.session_state.running_session_name else False
     is_active_local = st.session_state.session_started and bool(st.session_state.running_session_name)
 
+    # Active banner (markdown to avoid flashing)
     if is_active_db and is_active_local:
-        st.markdown(f"### Session **{st.session_state.running_session_name}** is active")
+        st.markdown(f"### 🟢 Session **{st.session_state.running_session_name}** is active")
         if st.session_state.session_end_ts:
             remaining = st.session_state.session_end_ts - now_int()
             if remaining < 0:
@@ -241,7 +319,7 @@ if mode == "teacher":
             secs = remaining % 60
             st.markdown(f"**Time left:** {mins}m {secs}s")
 
-        # QR generation (uses deployed HOST and unique session name)
+        # QR generation
         interval = current_interval()
         token = make_token(st.session_state.running_session_name, interval)
         query = {
@@ -252,7 +330,7 @@ if mode == "teacher":
         qr_url = HOST + "/?" + urllib.parse.urlencode(query)
         img_buf = generate_qr_image(qr_url)
         st.image(img_buf, caption="Scan to mark attendance")
-        st.caption("QR updates every few seconds while the session is active.")
+        st.caption("QR updates while the session is active.")
 
         # refresh QR & countdown
         time.sleep(QR_REFRESH)
@@ -261,37 +339,35 @@ if mode == "teacher":
     else:
         st.info("Start a session to display the QR.")
 
-    # CSV section (only visible when session is not active)
-    if st.session_state.running_session_name and session_active(st.session_state.running_session_name):
-        st.info("CSV will be available once the session ends.")
-    else:
-        st.subheader("Download Attendance")
-        # default to last-run session name if present, else empty
-        default_dl = st.session_state.running_session_name or ""
-        dls = st.text_input("Session to download (exact unique name)", value=default_dl)
-        if st.button("Generate CSV"):
-            if not dls.strip():
-                st.warning("Enter the exact unique session name to generate the CSV (see 'Session started as' message).")
+    # CSV section: show when session not active. Use last_session_name to pre-fill
+    st.subheader("Download Attendance")
+    default_dl = st.session_state.last_session_name or ""
+    dls = st.text_input("Session to download (exact unique name)", value=default_dl)
+    if st.button("Generate CSV"):
+        if not dls.strip():
+            st.warning("Enter the exact unique session name to generate the CSV (see 'Session started.' popup).")
+        else:
+            rows = fetch_attendance(dls.strip())
+            if not rows:
+                st.warning("No data found for this session.")
             else:
-                rows = fetch_attendance(dls.strip())
-                if not rows:
-                    st.warning("No data found for this session.")
-                else:
-                    buf = StringIO()
-                    writer = csv.writer(buf)
-                    writer.writerow(["reg_no", "session_name", "timestamp (human)"])
-                    for reg, ts in rows:
-                        # prefix timestamp to force Excel to treat as text
-                        writer.writerow([reg, dls.strip(), f"'{ts}'"])
-                    csv_data = buf.getvalue().encode("utf-8")
-                    st.download_button(
-                        "Download CSV",
-                        data=csv_data,
-                        file_name=f"attendance_{dls.strip()}.csv",
-                        mime="text/csv"
-                    )
+                buf = StringIO()
+                writer = csv.writer(buf)
+                writer.writerow(["reg_no", "session_name", "timestamp (human)"])
+                for reg, ts in rows:
+                    writer.writerow([reg, dls.strip(), f"'{ts}'"])  # force Excel text
+                csv_data = buf.getvalue().encode("utf-8")
+                st.download_button(
+                    "Download CSV",
+                    data=csv_data,
+                    file_name=f"attendance_{dls.strip()}.csv",
+                    mime="text/csv"
+                )
 
-# student QR entry
+
+# ---------------------------
+# STUDENT VIEW (QR only)
+# ---------------------------
 elif mode == "mark":
     st.title("Mark Attendance")
 
