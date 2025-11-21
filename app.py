@@ -6,18 +6,21 @@ from io import BytesIO, StringIO
 import urllib.parse
 import csv
 
-# ---------------------------------------------
-# CONFIG (DEPLOYMENT ONLY)
-# ---------------------------------------------
-HOST = "https://smart-qr-based-attendance-system.streamlit.app"  # YOUR DEPLOYED URL
-QR_REFRESH = 2       # seconds: how often QR token interval changes
-TOKEN_WINDOW = 30    # seconds: allowed clock drift / validity window
+# ---------------------------
+# CONFIG (Deployment only)
+# ---------------------------
+HOST = "https://smart-qr-based-attendance-system.streamlit.app"
+QR_REFRESH = 2       # seconds between QR/token refresh
+TOKEN_WINDOW = 30    # seconds token validity window
 DB_FILE = "attendance.db"
 
+# Local path of the last uploaded image (available in this environment)
+UPLOADED_IMAGE_PATH = "/mnt/data/b4ad9931-5731-4e85-ac7c-5ca2e8637ffe.png"
 
-# ---------------------------------------------
+
+# ---------------------------
 # DATABASE INIT
-# ---------------------------------------------
+# ---------------------------
 @st.cache_resource
 def init_db():
     con = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -31,7 +34,6 @@ def init_db():
             ended INTEGER DEFAULT 0
         )
     """)
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS attendance (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,18 +44,34 @@ def init_db():
             submit_ts INTEGER
         )
     """)
-
     con.commit()
     return con
 
 DB = init_db()
 
 
-# ---------------------------------------------
+# ---------------------------
 # HELPERS
-# ---------------------------------------------
+# ---------------------------
 def now_int():
     return int(time.time())
+
+def now_ist_struct():
+    # Convert current UTC epoch to IST struct_time
+    ist_offset = 5 * 3600 + 30 * 60
+    return time.localtime(now_int() + ist_offset)
+
+def format_session_unique(base_name):
+    """
+    Format unique session name as:
+      <base>_YYYYMMDD_HHMM  (IST)
+    """
+    base = base_name.strip()
+    if not base:
+        base = "Session"
+    t = now_ist_struct()
+    suffix = time.strftime("%Y%m%d_%H%M", t)
+    return f"{base}_{suffix}"
 
 def current_interval():
     return now_int() // QR_REFRESH
@@ -88,7 +106,6 @@ def token_valid(token):
     except Exception as e:
         return False, None, str(e)
 
-
 def generate_qr_image(url):
     qr = qrcode.QRCode(
         version=1,
@@ -105,38 +122,31 @@ def generate_qr_image(url):
     buf.seek(0)
     return buf
 
-
 def session_active(name):
-    """Return True if session exists and is not ended (ended == 0)."""
     cur = DB.cursor()
     cur.execute("SELECT started, ended FROM sessions WHERE name=?", (name,))
     row = cur.fetchone()
     return bool(row and row[0] and row[1] == 0)
 
-
-def start_session(name):
+def start_session(unique_name):
+    """Insert session row (unique_name already includes date/time)."""
     cur = DB.cursor()
     cur.execute("""
         INSERT OR REPLACE INTO sessions (id, name, started, ended)
         VALUES ((SELECT id FROM sessions WHERE name=?), ?, ?, 0)
-    """, (name, name, now_int()))
+    """, (unique_name, unique_name, now_int()))
     DB.commit()
-
 
 def end_session(name):
     cur = DB.cursor()
     cur.execute("UPDATE sessions SET ended=? WHERE name=?", (now_int(), name))
     DB.commit()
 
-
 def record_attendance(session_name, reg_no, token, token_ts):
     cur = DB.cursor()
-
-    cur.execute("SELECT id FROM attendance WHERE session_name=? AND reg_no=?", 
-                (session_name, reg_no))
+    cur.execute("SELECT id FROM attendance WHERE session_name=? AND reg_no=?", (session_name, reg_no))
     if cur.fetchone():
         return False, "This registration number has already submitted."
-
     cur.execute("""
         INSERT INTO attendance (session_name, reg_no, token, token_ts, submit_ts)
         VALUES (?, ?, ?, ?, ?)
@@ -144,17 +154,19 @@ def record_attendance(session_name, reg_no, token, token_ts):
     DB.commit()
     return True, "Attendance marked."
 
-
 def fetch_attendance(session_name):
+    """
+    Return rows with IST converted timestamp.
+    SQLite datetime(..., 'unixepoch', '+5 hours', '30 minutes') converts UTC->IST.
+    """
     cur = DB.cursor()
     cur.execute("""
-        SELECT reg_no, datetime(submit_ts, 'unixepoch')
+        SELECT reg_no, datetime(submit_ts, 'unixepoch', '+5 hours', '30 minutes')
         FROM attendance
         WHERE session_name=?
         ORDER BY submit_ts
     """, (session_name,))
     return cur.fetchall()
-
 
 # Helper to unwrap st.query_params values (Streamlit returns lists)
 def get_param(params, name, default=""):
@@ -166,9 +178,9 @@ def get_param(params, name, default=""):
     return val
 
 
-# ---------------------------------------------
+# ---------------------------
 # SESSION STATE SETUP
-# ---------------------------------------------
+# ---------------------------
 if "session_started" not in st.session_state:
     st.session_state.session_started = False
 
@@ -178,24 +190,28 @@ if "session_end_ts" not in st.session_state:
 if "running_session_name" not in st.session_state:
     st.session_state.running_session_name = ""
 
+if "running_session_display" not in st.session_state:
+    # human-friendly name shown in UI (base name)
+    st.session_state.running_session_display = ""
 
-# ---------------------------------------------
+
+# ---------------------------
 # STREAMLIT ROUTING / UI
-# ---------------------------------------------
+# ---------------------------
 st.set_page_config(page_title="QR Attendance", layout="centered")
 params = st.query_params
 mode = get_param(params, "mode", "teacher")
 
 
-# ---------------------------------------------
+# ---------------------------
 # TEACHER VIEW
-# ---------------------------------------------
+# ---------------------------
 if mode == "teacher":
     st.title("Teacher Dashboard — QR Attendance")
 
     st.sidebar.header("Session Controls")
 
-    session_name = st.sidebar.text_input("Session Name", value=st.session_state.running_session_name or "Session1")
+    base_session_name = st.sidebar.text_input("Session Name (base)", value=st.session_state.running_session_display or "Session1")
 
     timer_minutes = st.sidebar.number_input(
         "Auto-end after (minutes, 0 = manual end)",
@@ -207,24 +223,30 @@ if mode == "teacher":
 
     col1, col2 = st.sidebar.columns(2)
     if col1.button("Start"):
-        if session_name.strip():
-            start_session(session_name.strip())
+        if base_session_name.strip():
+            # create unique name using IST timestamp (format B)
+            unique_name = format_session_unique(base_session_name)
+            start_session(unique_name)
             st.session_state.session_started = True
-            st.session_state.running_session_name = session_name.strip()
+            st.session_state.running_session_name = unique_name
+            st.session_state.running_session_display = base_session_name.strip()
             if timer_minutes and timer_minutes > 0:
                 st.session_state.session_end_ts = now_int() + int(timer_minutes) * 60
             else:
                 st.session_state.session_end_ts = None
-            st.sidebar.success(f"Session '{session_name}' started.")
+            st.sidebar.success(f"Session started as '{unique_name}'")
 
     if col2.button("End"):
-        if session_name.strip():
-            end_session(session_name.strip())
+        if st.session_state.running_session_name:
+            end_session(st.session_state.running_session_name)
             st.session_state.session_started = False
             st.session_state.session_end_ts = None
-            st.sidebar.success(f"Session '{session_name}' ended.")
+            st.sidebar.success(f"Session '{st.session_state.running_session_name}' ended")
+            # clear running session info so teacher can start a fresh base name
+            st.session_state.running_session_name = ""
+            st.session_state.running_session_display = ""
 
-    # If timer expired, end the session
+    # If timer expired, end the session automatically
     if st.session_state.session_started and st.session_state.session_end_ts:
         if now_int() >= st.session_state.session_end_ts:
             if st.session_state.running_session_name:
@@ -232,15 +254,24 @@ if mode == "teacher":
             st.session_state.session_started = False
             st.session_state.session_end_ts = None
             st.sidebar.info("Session auto-ended (timer reached).")
+            st.session_state.running_session_name = ""
+            st.session_state.running_session_display = ""
 
-    # Check DB active state (in case another tab ended it)
-    is_active_db = session_active(session_name) if session_name else False
-    is_active_local = st.session_state.session_started and st.session_state.running_session_name == session_name
+    # Show uploaded image preview option (developer-provided path)
+    if UPLOADED_IMAGE_PATH:
+        if st.sidebar.checkbox("Show last uploaded image (debug)", value=False):
+            try:
+                st.image(UPLOADED_IMAGE_PATH, caption="Last uploaded image (local path)")
+            except Exception:
+                st.sidebar.warning("Could not load uploaded image from path.")
 
-    # Stable active banner using markdown (no flashing)
-    if session_name and is_active_db and is_active_local:
-        st.markdown(f"### 🟢 Session **{session_name}** is active")
+    # Determine actual active state from DB (in case another tab ended it)
+    is_active_db = session_active(st.session_state.running_session_name) if st.session_state.running_session_name else False
+    is_active_local = st.session_state.session_started and bool(st.session_state.running_session_name)
 
+    # Display active banner (markdown to avoid flashing)
+    if is_active_db and is_active_local:
+        st.markdown(f"### 🟢 Session **{st.session_state.running_session_name}** is active")
         if st.session_state.session_end_ts:
             remaining = st.session_state.session_end_ts - now_int()
             if remaining < 0:
@@ -249,12 +280,12 @@ if mode == "teacher":
             secs = remaining % 60
             st.markdown(f"**Time left:** {mins}m {secs}s")
 
-        # QR image and token
+        # QR generation (uses deployed HOST and unique session name)
         interval = current_interval()
-        token = make_token(session_name, interval)
+        token = make_token(st.session_state.running_session_name, interval)
         query = {
             "mode": "mark",
-            "session": session_name,
+            "session": st.session_state.running_session_name,
             "token": token
         }
         qr_url = HOST + "/?" + urllib.parse.urlencode(query)
@@ -262,44 +293,46 @@ if mode == "teacher":
         st.image(img_buf, caption="Scan to mark attendance")
         st.caption("QR updates every few seconds while the session is active.")
 
-        # Update QR / countdown
+        # refresh QR & countdown
         time.sleep(QR_REFRESH)
         st.rerun()
 
     else:
         st.info("Start a session to display the QR.")
 
-    # CSV section: only when session is not active in DB
-    if session_name and session_active(session_name):
+    # CSV section (only visible when session is not active)
+    if st.session_state.running_session_name and session_active(st.session_state.running_session_name):
         st.info("CSV will be available once the session ends.")
     else:
         st.subheader("Download Attendance")
-        dls = st.text_input("Session to download", value=session_name)
+        # default to last-run session name if present, else empty
+        default_dl = st.session_state.running_session_name or ""
+        dls = st.text_input("Session to download (exact unique name)", value=default_dl)
         if st.button("Generate CSV"):
-            rows = fetch_attendance(dls.strip())
-            if not rows:
-                st.warning("No data found for this session.")
+            if not dls.strip():
+                st.warning("Enter the exact unique session name to generate the CSV (see 'Session started as' message).")
             else:
-                buf = StringIO()
-                writer = csv.writer(buf)
-                writer.writerow(["reg_no", "session_name", "timestamp (human)"])
-                # Prefix timestamp with apostrophe to force Excel to treat it as text
-                for reg, ts in rows:
-                    writer.writerow([reg, dls.strip(), f"'{ts}'"])
+                rows = fetch_attendance(dls.strip())
+                if not rows:
+                    st.warning("No data found for this session.")
+                else:
+                    buf = StringIO()
+                    writer = csv.writer(buf)
+                    writer.writerow(["reg_no", "session_name", "timestamp (human)"])
+                    for reg, ts in rows:
+                        # prefix timestamp to force Excel to treat as text
+                        writer.writerow([reg, dls.strip(), f"'{ts}'"])
+                    csv_data = buf.getvalue().encode("utf-8")
+                    st.download_button(
+                        "Download CSV",
+                        data=csv_data,
+                        file_name=f"attendance_{dls.strip()}.csv",
+                        mime="text/csv"
+                    )
 
-                csv_data = buf.getvalue().encode("utf-8")
-
-                st.download_button(
-                    "Download CSV",
-                    data=csv_data,
-                    file_name=f"attendance_{dls.strip()}.csv",
-                    mime="text/csv"
-                )
-
-
-# ---------------------------------------------
-# STUDENT VIEW (QR ONLY)
-# ---------------------------------------------
+# ---------------------------
+# STUDENT VIEW (QR only)
+# ---------------------------
 elif mode == "mark":
     st.title("Mark Attendance")
 
