@@ -14,10 +14,6 @@ QR_REFRESH = 1       # seconds between QR/token refresh (1s -> smooth countdown)
 TOKEN_WINDOW = 30    # seconds token validity window
 DB_FILE = "attendance.db"
 
-# Path to uploaded image (developer-provided). Provided to you in the UI as a debug preview.
-UPLOADED_IMAGE_PATH = "/mnt/data/98d3418a-c3ca-4a53-af3c-abe56b4edda6.png"
-
-
 # ---------------------------
 # DATABASE INIT
 # ---------------------------
@@ -300,14 +296,6 @@ if mode == "teacher":
             st.session_state.running_session_name = ""
             st.session_state.running_session_display = ""
             show_notification("Session auto-ended (timer).")
-
-    # Optional debug preview of uploaded image
-    if UPLOADED_IMAGE_PATH:
-        if st.sidebar.checkbox("Show last uploaded image (debug)", value=False):
-            try:
-                st.image(UPLOADED_IMAGE_PATH, caption="Last uploaded image (local)")
-            except Exception:
-                st.sidebar.warning("Could not load uploaded image from path.")
 
     # Check DB active state (in case another tab ended it)
     is_active_db = session_active(st.session_state.running_session_name) if st.session_state.running_session_name else False
