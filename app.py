@@ -6,21 +6,11 @@ from io import BytesIO, StringIO
 import urllib.parse
 import csv
 
-# ---------------------------
-# CONFIG (Deployment only)
-# ---------------------------
 HOST = "https://smart-qr-based-attendance-system.streamlit.app"
-QR_REFRESH = 2       # seconds between QR/token refresh
-TOKEN_WINDOW = 30    # seconds token validity window
+QR_REFRESH = 2
+TOKEN_WINDOW = 30
 DB_FILE = "attendance.db"
 
-# Local path of the last uploaded image (available in this environment)
-UPLOADED_IMAGE_PATH = "/mnt/data/b4ad9931-5731-4e85-ac7c-5ca2e8637ffe.png"
-
-
-# ---------------------------
-# DATABASE INIT
-# ---------------------------
 @st.cache_resource
 def init_db():
     con = sqlite3.connect(DB_FILE, check_same_thread=False)
@@ -49,28 +39,19 @@ def init_db():
 
 DB = init_db()
 
-
-# ---------------------------
-# HELPERS
-# ---------------------------
 def now_int():
     return int(time.time())
 
 def now_ist_struct():
-    # Convert current UTC epoch to IST struct_time
-    ist_offset = 5 * 3600 + 30 * 60
+    ist_offset = 5 * 3600 + 30 * 60 # +5:30 hours
     return time.localtime(now_int() + ist_offset)
 
 def format_session_unique(base_name):
-    """
-    Format unique session name as:
-      <base>_YYYYMMDD_HHMM  (IST)
-    """
     base = base_name.strip()
     if not base:
         base = "Session"
     t = now_ist_struct()
-    suffix = time.strftime("%Y%m%d_%H%M", t)
+    suffix = time.strftime("%Y%m%d_%H%M", t)  #base_yyyymmdd_hhmm
     return f"{base}_{suffix}"
 
 def current_interval():
@@ -177,10 +158,6 @@ def get_param(params, name, default=""):
         return val[0]
     return val
 
-
-# ---------------------------
-# SESSION STATE SETUP
-# ---------------------------
 if "session_started" not in st.session_state:
     st.session_state.session_started = False
 
@@ -194,18 +171,11 @@ if "running_session_display" not in st.session_state:
     # human-friendly name shown in UI (base name)
     st.session_state.running_session_display = ""
 
-
-# ---------------------------
-# STREAMLIT ROUTING / UI
-# ---------------------------
 st.set_page_config(page_title="QR Attendance", layout="centered")
 params = st.query_params
 mode = get_param(params, "mode", "teacher")
 
-
-# ---------------------------
-# TEACHER VIEW
-# ---------------------------
+# teacher dashboard
 if mode == "teacher":
     st.title("Teacher Dashboard — QR Attendance")
 
@@ -261,9 +231,8 @@ if mode == "teacher":
     is_active_db = session_active(st.session_state.running_session_name) if st.session_state.running_session_name else False
     is_active_local = st.session_state.session_started and bool(st.session_state.running_session_name)
 
-    # Display active banner (markdown to avoid flashing)
     if is_active_db and is_active_local:
-        st.markdown(f"### 🟢 Session **{st.session_state.running_session_name}** is active")
+        st.markdown(f"### Session **{st.session_state.running_session_name}** is active")
         if st.session_state.session_end_ts:
             remaining = st.session_state.session_end_ts - now_int()
             if remaining < 0:
@@ -322,9 +291,7 @@ if mode == "teacher":
                         mime="text/csv"
                     )
 
-# ---------------------------
-# STUDENT VIEW (QR only)
-# ---------------------------
+# student QR entry
 elif mode == "mark":
     st.title("Mark Attendance")
 
