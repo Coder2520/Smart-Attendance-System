@@ -172,13 +172,9 @@ def get_param(params, name, default=""):
 if "session_started" not in st.session_state:
     st.session_state.session_started = False
 
-# Holds the epoch timestamp when this teacher-started session should end (if timer used)
-# Note: we store this in session_state so the UI can show remaining time. The DB 'ended' field
-# will be updated when the timer expires (or when teacher clicks End).
 if "session_end_ts" not in st.session_state:
     st.session_state.session_end_ts = None
 
-# Holds the currently-running session name in this browser session (teacher panel)
 if "running_session_name" not in st.session_state:
     st.session_state.running_session_name = ""
 
@@ -201,29 +197,24 @@ if mode == "teacher":
 
     session_name = st.sidebar.text_input("Session Name", value=st.session_state.running_session_name or "Session1")
 
-    # Timer input: minutes (optional). If left 0 or blank, teacher must end manually.
     timer_minutes = st.sidebar.number_input(
         "Auto-end after (minutes, 0 = manual end)",
         min_value=0,
         value=0,
         step=1,
-        help="If you set > 0, session will automatically end after this many minutes."
+        help="If > 0, session will automatically end after this many minutes."
     )
 
     col1, col2 = st.sidebar.columns(2)
     if col1.button("Start"):
         if session_name.strip():
-            # start session in DB
             start_session(session_name.strip())
             st.session_state.session_started = True
             st.session_state.running_session_name = session_name.strip()
-
-            # If teacher supplied a timer (>0 min), compute end timestamp
             if timer_minutes and timer_minutes > 0:
                 st.session_state.session_end_ts = now_int() + int(timer_minutes) * 60
             else:
                 st.session_state.session_end_ts = None
-
             st.sidebar.success(f"Session '{session_name}' started.")
 
     if col2.button("End"):
@@ -233,25 +224,23 @@ if mode == "teacher":
             st.session_state.session_end_ts = None
             st.sidebar.success(f"Session '{session_name}' ended.")
 
-    # If a timer was set earlier and we're running that session, check if timer expired
+    # If timer expired, end the session
     if st.session_state.session_started and st.session_state.session_end_ts:
         if now_int() >= st.session_state.session_end_ts:
-            # timer expired → end session in DB
             if st.session_state.running_session_name:
                 end_session(st.session_state.running_session_name)
             st.session_state.session_started = False
             st.session_state.session_end_ts = None
             st.sidebar.info("Session auto-ended (timer reached).")
 
-    # Determine actual active state from DB (in case another browser ended it)
+    # Check DB active state (in case another tab ended it)
     is_active_db = session_active(session_name) if session_name else False
     is_active_local = st.session_state.session_started and st.session_state.running_session_name == session_name
 
-    # Show stable "active" message (markdown to avoid flashing)
+    # Stable active banner using markdown (no flashing)
     if session_name and is_active_db and is_active_local:
         st.markdown(f"### 🟢 Session **{session_name}** is active")
 
-        # Show remaining time if timer is running
         if st.session_state.session_end_ts:
             remaining = st.session_state.session_end_ts - now_int()
             if remaining < 0:
@@ -260,7 +249,7 @@ if mode == "teacher":
             secs = remaining % 60
             st.markdown(f"**Time left:** {mins}m {secs}s")
 
-        # Show QR with automatic token
+        # QR image and token
         interval = current_interval()
         token = make_token(session_name, interval)
         query = {
@@ -271,17 +260,16 @@ if mode == "teacher":
         qr_url = HOST + "/?" + urllib.parse.urlencode(query)
         img_buf = generate_qr_image(qr_url)
         st.image(img_buf, caption="Scan to mark attendance")
-
         st.caption("QR updates every few seconds while the session is active.")
 
-        # Sleep & rerun to update QR token / countdown
+        # Update QR / countdown
         time.sleep(QR_REFRESH)
-        st.experimental_rerun()
+        st.rerun()
 
     else:
         st.info("Start a session to display the QR.")
 
-    # CSV section: only show when session is not active in DB
+    # CSV section: only when session is not active in DB
     if session_name and session_active(session_name):
         st.info("CSV will be available once the session ends.")
     else:
