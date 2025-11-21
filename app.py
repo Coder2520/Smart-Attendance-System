@@ -235,7 +235,7 @@ if mode == "teacher":
 
     # ACTIVE SESSION
     if session_active(rn):
-        st.markdown(f"### 🟢 Session **{rn}** is active")
+        st.markdown(f"### Session **{rn}** is active")
 
         # ---------------------------------------------------
         # NON-FLICKERING QR VIA JS IN st.components.html
@@ -330,7 +330,7 @@ elif mode == "mark":
         st.session_state[lock_key] = False
 
     if st.session_state[lock_key]:
-        st.success("Attendance already recorded ✔")
+        st.error("Attendance already recorded for this session.")
     else:
         with st.form("attend"):
             reg = st.text_input("Registration Number")
