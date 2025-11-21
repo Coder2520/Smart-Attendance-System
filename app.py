@@ -272,14 +272,6 @@ if mode == "teacher":
             st.session_state.running_session_display = ""
             show_notification("Session auto-ended (timer).")
 
-    # Optional debug preview of uploaded image
-    if UPLOADED_IMAGE_PATH:
-        if st.sidebar.checkbox("Show last uploaded image (debug)", value=False):
-            try:
-                st.image(UPLOADED_IMAGE_PATH, caption="Last uploaded image (local)")
-            except Exception:
-                st.sidebar.warning("Could not load uploaded image from path.")
-
     # Check DB active state (in case another tab ended it)
     is_active_db = session_active(st.session_state.running_session_name) if st.session_state.running_session_name else False
     is_active_local = st.session_state.session_started and bool(st.session_state.running_session_name)
