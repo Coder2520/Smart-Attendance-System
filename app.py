@@ -359,7 +359,7 @@ elif mode == "mark":
     st.info(f"Session: {session_name}")
 
     if st.session_state.submitted_once:
-        st.success("Your attendance is already recorded ✔")
+        st.error("Your attendance is already recorded for this session.")
     else:
         with st.form("attend"):
             reg = st.text_input("Registration Number")
