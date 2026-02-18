@@ -47,8 +47,7 @@ mode = params.get("mode", ["teacher"])[0]
 # TEACHER VIEW
 # -------------------------------
 if mode == "teacher":
-    st.title("Teacher QR (Changes Every 3 Seconds)")
-    st.caption("Live QR only. Photos will fail.")
+    st.caption("Scan the QR for attendance.")
 
     qr_html = f"""
     <div style="text-align:center;">
