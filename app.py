@@ -10,7 +10,7 @@ QR_INTERVAL = 3   # seconds
 DB_FILE = "qr_scan.db"
 
 # -------------------------------
-# DATABASE (optional logging)
+# DATABASE
 # -------------------------------
 @st.cache_resource
 def init_db():
@@ -86,7 +86,7 @@ if mode == "teacher":
     st.components.v1.html(qr_html, height=380)
 
 # -------------------------------
-# SCAN VIEW (CORE LOGIC)
+# SCAN VIEW
 # -------------------------------
 elif mode == "scan":
     st.title("QR Scan Result")
@@ -103,15 +103,14 @@ elif mode == "scan":
     scan_time = now()
     qr_time = interval * QR_INTERVAL
 
-    # 🔒 STRICT TIME CHECK (THIS IS THE ENTIRE POINT)
+    # TIME CHECK
     if abs(scan_time - qr_time) <= QR_INTERVAL:
         result = "VALID (Live Scan)"
-        st.success("✅ VALID QR — Live scan detected")
+        st.success("VALID QR — Live scan detected")
     else:
         result = "INVALID (Photo / Forwarded)"
-        st.error("❌ INVALID QR — Photo or forwarded scan")
+        st.error("INVALID QR — Photo or forwarded scan")
 
-    # Optional logging
     cur = DB.cursor()
     cur.execute(
         "INSERT INTO scans (ts, result) VALUES (?, ?)",
