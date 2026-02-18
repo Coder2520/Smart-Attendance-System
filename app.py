@@ -52,7 +52,6 @@ if mode == "teacher":
     qr_html = f"""
     <div style="text-align:center;">
         <img id="qr_img" width="300">
-        <p style="color:gray;">QR refreshes every {QR_INTERVAL} seconds</p>
     </div>
 
     <script>
