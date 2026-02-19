@@ -1,7 +1,6 @@
 import streamlit as st
 import time
 import sqlite3
-import urllib.parse
 
 # -------------------------------
 # CONFIG
@@ -33,13 +32,10 @@ DB = init_db()
 def now():
     return int(time.time())
 
-def current_interval():
-    return now() // QR_INTERVAL
-
 # -------------------------------
 # ROUTING
 # -------------------------------
-st.set_page_config(page_title="Strict QR Scan Demo", layout="centered")
+st.set_page_config(page_title="QR Attendance", layout="centered")
 params = st.query_params
 mode = params.get("mode", ["teacher"])[0]
 
@@ -61,7 +57,7 @@ if mode == "teacher":
     function updateQR() {{
         const now = Math.floor(Date.now() / 1000);
         const interval = Math.floor(now / QR_INTERVAL);
-        const token = "QR|" + interval;
+        const token = "QR_" + interval;
 
         const target =
             BASE_URL +
@@ -73,7 +69,7 @@ if mode == "teacher":
             encodeURIComponent(target);
 
         document.getElementById("qr_img").src =
-            qr_api + "&t=" + Date.now(); // cache-buster
+            qr_api + "&t=" + Date.now();
     }}
 
     updateQR();
@@ -84,34 +80,50 @@ if mode == "teacher":
     st.components.v1.html(qr_html, height=380)
 
 # -------------------------------
-# SCAN VIEW
+# SCAN VIEW (PHONE)
 # -------------------------------
 elif mode == "scan":
-    st.title("QR Scan Result")
+    st.set_page_config(page_title="Attendance Check-in", layout="centered")
+    st.title("Attendance Check-in")
 
     token = params.get("token", [""])[0]
 
+    # TOKEN PARSE
     try:
-        _, interval = token.split("|")
+        _, interval = token.split("_")
         interval = int(interval)
     except:
-        st.error("Invalid QR.")
+        st.error("Invalid or corrupted QR code.")
         st.stop()
 
-    scan_time = now()
-    qr_time = interval * QR_INTERVAL
-
-    # TIME CHECK
-    if abs(scan_time - qr_time) <= QR_INTERVAL:
-        result = "VALID (Live Scan)"
-        st.success("VALID QR — Live scan detected")
-    else:
-        result = "INVALID (Photo / Forwarded)"
-        st.error("INVALID QR — Photo or forwarded scan")
-
-    cur = DB.cursor()
-    cur.execute(
-        "INSERT INTO scans (ts, result) VALUES (?, ?)",
-        (scan_time, result)
+    # REGISTRATION NUMBER INPUT
+    reg_no = st.text_input(
+        "Enter your Registration Number",
+        placeholder="e.g. 22BCE1234"
     )
-    DB.commit()
+
+    # SUBMIT
+    if st.button("Mark Attendance", use_container_width=True):
+
+        if not reg_no.strip():
+            st.warning("Please enter your registration number.")
+            st.stop()
+
+        scan_time = now()
+        qr_time = interval * QR_INTERVAL
+
+        # TIME VALIDATION
+        if abs(scan_time - qr_time) <= QR_INTERVAL:
+            status = "PRESENT"
+            st.success("Marked as present")
+        else:
+            status = "EXPIRED"
+            st.error("QR expired. Please scan the current QR.")
+
+        # LOG (TEMPORARY)
+        cur = DB.cursor()
+        cur.execute(
+            "INSERT INTO scans (ts, result) VALUES (?, ?)",
+            (scan_time, f"{reg_no} | {status}")
+        )
+        DB.commit()
