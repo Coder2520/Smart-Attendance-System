@@ -38,8 +38,8 @@ def now():
 # -------------------------------
 st.set_page_config(page_title="QR Attendance", layout="centered")
 
-params = st.query_params
-mode = params.get("mode", ["teacher"])[0]
+# ✅ FIXED QUERY PARAM HANDLING
+mode = st.query_params.get("mode", "teacher")
 
 # -------------------------------
 # TEACHER VIEW
@@ -57,9 +57,7 @@ if mode == "teacher":
     const QR_INTERVAL = {QR_INTERVAL};
 
     function getBaseURL() {{
-        // Break out of Streamlit iframe safely
-        const url = window.top.location.href;
-        return url.split("?")[0];
+        return window.top.location.href.split("?")[0];
     }}
 
     function updateQR() {{
@@ -94,7 +92,7 @@ elif mode == "scan":
     st.set_page_config(page_title="Attendance Check-in", layout="centered")
     st.title("Attendance Check-in")
 
-    token = params.get("token", [""])[0]
+    token = st.query_params.get("token", "")
 
     try:
         _, interval = token.split("_")
@@ -116,10 +114,10 @@ elif mode == "scan":
 
         if abs(scan_time - qr_time) <= QR_INTERVAL:
             status = "PRESENT"
-            st.success("Attendance marked")
+            st.success("✅ Attendance marked")
         else:
             status = "EXPIRED"
-            st.error("QR expired")
+            st.error("❌ QR expired")
 
         cur = DB.cursor()
         cur.execute(
