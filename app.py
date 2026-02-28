@@ -5,7 +5,7 @@ import sqlite3
 # -------------------------------
 # CONFIG
 # -------------------------------
-QR_INTERVAL = 3   # seconds
+QR_INTERVAL = 3
 DB_FILE = "qr_scan.db"
 
 # -------------------------------
@@ -41,15 +41,15 @@ st.set_page_config(page_title="QR Attendance", layout="centered")
 params = st.query_params
 mode = params.get("mode", ["teacher"])[0]
 
-# Get correct deployed base URL
-BASE_URL = st.request.url.split("?")[0]
+# ✅ SAFE BASE URL (Streamlit Cloud compatible)
+BASE_URL = f"https://{st.get_option('browser.serverAddress')}"
 
 # -------------------------------
 # TEACHER VIEW
 # -------------------------------
 if mode == "teacher":
     st.title("QR Attendance")
-    st.caption("Students scan the QR code to mark attendance.")
+    st.caption("Scan the QR to mark attendance")
 
     qr_html = f"""
     <div style="text-align:center;">
@@ -67,7 +67,7 @@ if mode == "teacher":
 
         const target =
             BASE_URL +
-            "?mode=scan&token=" +
+            "/?mode=scan&token=" +
             encodeURIComponent(token);
 
         const qr_api =
@@ -86,7 +86,7 @@ if mode == "teacher":
     st.components.v1.html(qr_html, height=360)
 
 # -------------------------------
-# SCAN VIEW (PHONE)
+# SCAN VIEW
 # -------------------------------
 elif mode == "scan":
     st.set_page_config(page_title="Attendance Check-in", layout="centered")
@@ -94,23 +94,19 @@ elif mode == "scan":
 
     token = params.get("token", [""])[0]
 
-    # TOKEN PARSE
     try:
         _, interval = token.split("_")
         interval = int(interval)
     except:
-        st.error("Invalid or corrupted QR code.")
+        st.error("Invalid QR code")
         st.stop()
 
-    reg_no = st.text_input(
-        "Enter your Registration Number",
-        placeholder="e.g. 22BCE1234"
-    )
+    reg_no = st.text_input("Enter Registration Number")
 
     if st.button("Mark Attendance", use_container_width=True):
 
         if not reg_no.strip():
-            st.warning("Please enter your registration number.")
+            st.warning("Enter registration number")
             st.stop()
 
         scan_time = now()
@@ -118,10 +114,10 @@ elif mode == "scan":
 
         if abs(scan_time - qr_time) <= QR_INTERVAL:
             status = "PRESENT"
-            st.success("✅ Attendance marked")
+            st.success("Attendance marked")
         else:
             status = "EXPIRED"
-            st.error("❌ QR expired. Please scan the current QR.")
+            st.error("QR expired")
 
         cur = DB.cursor()
         cur.execute(
@@ -130,8 +126,5 @@ elif mode == "scan":
         )
         DB.commit()
 
-# -------------------------------
-# FALLBACK
-# -------------------------------
 else:
-    st.error("Invalid mode.")
+    st.error("Invalid mode")
