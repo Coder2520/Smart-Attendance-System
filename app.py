@@ -38,7 +38,6 @@ def now():
 # -------------------------------
 st.set_page_config(page_title="QR Attendance", layout="centered")
 
-# ✅ FIXED QUERY PARAM HANDLING
 mode = st.query_params.get("mode", "teacher")
 
 # -------------------------------
@@ -92,6 +91,12 @@ elif mode == "scan":
     st.set_page_config(page_title="Attendance Check-in", layout="centered")
     st.title("Attendance Check-in")
 
+    # capture scan event time ONCE
+    if "scan_time" not in st.session_state:
+        st.session_state.scan_time = int(time.time())
+
+    scan_time = st.session_state.scan_time
+
     token = st.query_params.get("token", "")
 
     try:
@@ -109,22 +114,24 @@ elif mode == "scan":
             st.warning("Enter registration number")
             st.stop()
 
-        scan_time = now()
         qr_time = interval * QR_INTERVAL
-
-        if abs(scan_time - qr_time) <= QR_INTERVAL:
+        
+        if 0 <= (scan_time - qr_time) < QR_INTERVAL:
             status = "PRESENT"
-            st.success("✅ Attendance marked")
+            st.success("Attendance marked")
         else:
             status = "EXPIRED"
-            st.error("❌ QR expired")
+            st.error("QR expired")
 
-        cur = DB.cursor()
-        cur.execute(
-            "INSERT INTO scans (ts, reg_no, status) VALUES (?, ?, ?)",
-            (scan_time, reg_no.strip(), status)
-        )
-        DB.commit()
-
+        try:
+            cur = DB.cursor()
+            cur.execute(
+                "INSERT INTO scans (ts, reg_no, status) VALUES (?, ?, ?)",
+                (scan_time, reg_no.strip(), status)
+            )
+            DB.commit()
+        except:
+            st.error("Database error while saving attendance.")
+            st.stop()
 else:
     st.error("Invalid mode")
