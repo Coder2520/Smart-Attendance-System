@@ -41,15 +41,12 @@ st.set_page_config(page_title="QR Attendance", layout="centered")
 params = st.query_params
 mode = params.get("mode", ["teacher"])[0]
 
-# ✅ SAFE BASE URL (Streamlit Cloud compatible)
-BASE_URL = f"https://{st.get_option('browser.serverAddress')}"
-
 # -------------------------------
 # TEACHER VIEW
 # -------------------------------
 if mode == "teacher":
     st.title("QR Attendance")
-    st.caption("Scan the QR to mark attendance")
+    st.caption("Scan the QR code to mark attendance")
 
     qr_html = f"""
     <div style="text-align:center;">
@@ -58,7 +55,12 @@ if mode == "teacher":
 
     <script>
     const QR_INTERVAL = {QR_INTERVAL};
-    const BASE_URL = "{BASE_URL}";
+
+    function getBaseURL() {{
+        // Break out of Streamlit iframe safely
+        const url = window.top.location.href;
+        return url.split("?")[0];
+    }}
 
     function updateQR() {{
         const now = Math.floor(Date.now() / 1000);
@@ -66,8 +68,8 @@ if mode == "teacher":
         const token = "QR_" + interval;
 
         const target =
-            BASE_URL +
-            "/?mode=scan&token=" +
+            getBaseURL() +
+            "?mode=scan&token=" +
             encodeURIComponent(token);
 
         const qr_api =
