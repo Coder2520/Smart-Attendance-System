@@ -18,7 +18,8 @@ def init_db():
     cur.execute("""
         CREATE TABLE IF NOT EXISTS scans (
             ts INTEGER,
-            result TEXT
+            reg_no TEXT,
+            status TEXT
         )
     """)
     con.commit()
@@ -33,26 +34,31 @@ def now():
     return int(time.time())
 
 # -------------------------------
-# ROUTING
+# PAGE CONFIG
 # -------------------------------
 st.set_page_config(page_title="QR Attendance", layout="centered")
+
 params = st.query_params
 mode = params.get("mode", ["teacher"])[0]
+
+# Get correct deployed base URL
+BASE_URL = st.request.url.split("?")[0]
 
 # -------------------------------
 # TEACHER VIEW
 # -------------------------------
 if mode == "teacher":
-    st.caption("Scan the QR for attendance.")
+    st.title("QR Attendance")
+    st.caption("Students scan the QR code to mark attendance.")
 
     qr_html = f"""
     <div style="text-align:center;">
-        <img id="qr_img" width="300">
+        <img id="qr_img" width="300"/>
     </div>
 
     <script>
     const QR_INTERVAL = {QR_INTERVAL};
-    const BASE_URL = window.location.origin;
+    const BASE_URL = "{BASE_URL}";
 
     function updateQR() {{
         const now = Math.floor(Date.now() / 1000);
@@ -61,7 +67,7 @@ if mode == "teacher":
 
         const target =
             BASE_URL +
-            "/?mode=scan&token=" +
+            "?mode=scan&token=" +
             encodeURIComponent(token);
 
         const qr_api =
@@ -77,7 +83,7 @@ if mode == "teacher":
     </script>
     """
 
-    st.components.v1.html(qr_html, height=380)
+    st.components.v1.html(qr_html, height=360)
 
 # -------------------------------
 # SCAN VIEW (PHONE)
@@ -96,13 +102,11 @@ elif mode == "scan":
         st.error("Invalid or corrupted QR code.")
         st.stop()
 
-    # REGISTRATION NUMBER INPUT
     reg_no = st.text_input(
         "Enter your Registration Number",
         placeholder="e.g. 22BCE1234"
     )
 
-    # SUBMIT
     if st.button("Mark Attendance", use_container_width=True):
 
         if not reg_no.strip():
@@ -112,18 +116,22 @@ elif mode == "scan":
         scan_time = now()
         qr_time = interval * QR_INTERVAL
 
-        # TIME VALIDATION
         if abs(scan_time - qr_time) <= QR_INTERVAL:
             status = "PRESENT"
-            st.success("Marked as present")
+            st.success("✅ Attendance marked")
         else:
             status = "EXPIRED"
-            st.error("QR expired. Please scan the current QR.")
+            st.error("❌ QR expired. Please scan the current QR.")
 
-        # LOG (TEMPORARY)
         cur = DB.cursor()
         cur.execute(
-            "INSERT INTO scans (ts, result) VALUES (?, ?)",
-            (scan_time, f"{reg_no} | {status}")
+            "INSERT INTO scans (ts, reg_no, status) VALUES (?, ?, ?)",
+            (scan_time, reg_no.strip(), status)
         )
         DB.commit()
+
+# -------------------------------
+# FALLBACK
+# -------------------------------
+else:
+    st.error("Invalid mode.")
