@@ -5,7 +5,7 @@ import sqlite3
 # -------------------------------
 # CONFIG
 # -------------------------------
-QR_INTERVAL = 3
+QR_VALID_SECONDS = 5          # how long a QR is valid
 DB_FILE = "qr_scan.db"
 
 # -------------------------------
@@ -28,12 +28,6 @@ def init_db():
 DB = init_db()
 
 # -------------------------------
-# HELPERS
-# -------------------------------
-def now():
-    return int(time.time())
-
-# -------------------------------
 # PAGE CONFIG
 # -------------------------------
 st.set_page_config(page_title="QR Attendance", layout="centered")
@@ -53,19 +47,19 @@ if mode == "teacher":
     </div>
 
     <script>
-    const QR_INTERVAL = {QR_INTERVAL};
+    const QR_VALID_SECONDS = {QR_VALID_SECONDS};
 
-    function getBaseURL() {{
+    function baseURL() {{
         return window.top.location.href.split("?")[0];
     }}
 
     function updateQR() {{
-        const now = Math.floor(Date.now() / 1000);
-        const interval = Math.floor(now / QR_INTERVAL);
-        const token = "QR_" + interval;
+        // exact issue timestamp (seconds)
+        const issuedAt = Math.floor(Date.now() / 1000);
+        const token = "QR_" + issuedAt;
 
         const target =
-            getBaseURL() +
+            baseURL() +
             "?mode=scan&token=" +
             encodeURIComponent(token);
 
@@ -78,14 +72,14 @@ if mode == "teacher":
     }}
 
     updateQR();
-    setInterval(updateQR, QR_INTERVAL * 1000);
+    setInterval(updateQR, QR_VALID_SECONDS * 1000);
     </script>
     """
 
     st.components.v1.html(qr_html, height=360)
 
 # -------------------------------
-# SCAN VIEW
+# SCAN VIEW (PHONE)
 # -------------------------------
 elif mode == "scan":
     st.set_page_config(page_title="Attendance Check-in", layout="centered")
@@ -100,23 +94,24 @@ elif mode == "scan":
     token = st.query_params.get("token", "")
 
     try:
-        _, interval = token.split("_")
-        interval = int(interval)
+        issued_at = int(token.split("_")[1])
     except:
         st.error("Invalid QR code")
         st.stop()
 
-    reg_no = st.text_input("Enter Registration Number")
+    reg_no = st.text_input(
+        "Enter Registration Number",
+        placeholder="e.g. 22BCE1234"
+    )
 
     if st.button("Mark Attendance", use_container_width=True):
 
         if not reg_no.strip():
-            st.warning("Enter registration number")
+            st.warning("Please enter your registration number")
             st.stop()
 
-        qr_time = interval * QR_INTERVAL
-        
-        if 0 <= (scan_time - qr_time) < QR_INTERVAL:
+        # event-time validation
+        if 0 <= (scan_time - issued_at) <= QR_VALID_SECONDS:
             status = "PRESENT"
             st.success("Attendance marked")
         else:
@@ -131,7 +126,11 @@ elif mode == "scan":
             )
             DB.commit()
         except:
-            st.error("Database error while saving attendance.")
+            st.error("Database error while saving attendance")
             st.stop()
+
+# -------------------------------
+# FALLBACK
+# -------------------------------
 else:
     st.error("Invalid mode")
