@@ -5,8 +5,7 @@ import time
 # -----------------------------
 # CONFIG
 # -----------------------------
-QR_VALID_SECONDS = 3
-SUBMIT_WINDOW = 30
+QR_INTERVAL = 3
 DB_FILE = "attendance.db"
 
 # -----------------------------
@@ -50,7 +49,7 @@ if mode == "teacher":
 
     <script>
 
-    const VALID = {QR_VALID_SECONDS};
+    const INTERVAL = {QR_INTERVAL};
 
     function baseURL() {{
         return window.top.location.href.split("?")[0];
@@ -58,24 +57,24 @@ if mode == "teacher":
 
     function updateQR() {{
 
-        const issued = Math.floor(Date.now() / 1000);
-        const token = "QR_" + issued;
+        const interval = Math.floor(Date.now()/1000/{QR_INTERVAL});
+        const token = "QR_" + interval;
 
         const target =
             baseURL() +
             "?mode=scan&token=" +
             encodeURIComponent(token);
 
-        const qr =
+        const qr_api =
         "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=" +
         encodeURIComponent(target);
 
         document.getElementById("qr_img").src =
-        qr + "&t=" + Date.now();
+        qr_api + "&t=" + Date.now();
     }}
 
     updateQR();
-    setInterval(updateQR, VALID * 1000);
+    setInterval(updateQR, INTERVAL * 1000);
 
     </script>
     """
@@ -83,7 +82,7 @@ if mode == "teacher":
     st.components.v1.html(qr_html, height=360)
 
 # -----------------------------
-# SCAN VIEW
+# STUDENT SCAN VIEW
 # -----------------------------
 elif mode == "scan":
 
@@ -92,26 +91,17 @@ elif mode == "scan":
     token = params.get("token", "")
 
     try:
-        issue_time = int(token.split("_")[1])
+        scanned_interval = int(token.split("_")[1])
     except:
         st.error("Invalid QR code")
         st.stop()
 
-    # capture scan time ONCE
-    if "scan_time" not in st.session_state:
-        st.session_state.scan_time = int(time.time())
+    # server interval
+    current_interval = int(time.time() // QR_INTERVAL)
 
-    scan_time = st.session_state.scan_time
-    server_time = int(time.time())
-
-    # rule 1: must scan within 3 seconds of issue
-    if scan_time - issue_time > QR_VALID_SECONDS:
-        st.error("QR expired (scan too late)")
-        st.stop()
-
-    # rule 2: submission must happen within 30 seconds of scan
-    if server_time - scan_time > SUBMIT_WINDOW:
-        st.error("Submission window expired")
+    # accept only current or previous interval
+    if current_interval - scanned_interval > 1:
+        st.error("QR expired. Please scan again.")
         st.stop()
 
     reg_no = st.text_input("Enter Registration Number")
@@ -127,7 +117,7 @@ elif mode == "scan":
 
         cur.execute(
             "INSERT INTO attendance VALUES (?, ?, ?)",
-            (server_time, reg_no.strip(), token)
+            (int(time.time()), reg_no.strip(), token)
         )
 
         con.commit()
