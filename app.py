@@ -100,7 +100,7 @@ elif mode == "scan":
     current_interval = int(time.time() // QR_INTERVAL)
 
     # accept only current or previous interval
-    if current_interval - scanned_interval > 1:
+    if current_interval - scanned_interval > 2:
         st.error("QR expired. Please scan again.")
         st.stop()
 
