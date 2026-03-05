@@ -96,17 +96,21 @@ elif mode == "scan":
         st.error("Invalid QR code")
         st.stop()
 
-    # server interval
+    # Capture scan interval once
+    if "scan_interval" not in st.session_state:
+        st.session_state.scan_interval = int(time.time() // QR_INTERVAL)
+
+    scan_interval = st.session_state.scan_interval
     current_interval = int(time.time() // QR_INTERVAL)
 
-    # accept only current or previous interval
-    if current_interval - scanned_interval > 2:
+    # Validate only using stored scan interval
+    if scan_interval - scanned_interval > 1:
         st.error("QR expired. Please scan again.")
         st.stop()
 
     reg_no = st.text_input("Enter Registration Number")
 
-    if st.button("Mark Attendance", use_container_width=True):
+    if st.button("Mark Attendance"):
 
         if not reg_no.strip():
             st.warning("Enter registration number")
