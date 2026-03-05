@@ -2,42 +2,42 @@ import streamlit as st
 import sqlite3
 import time
 
-# -----------------------------
+# --------------------
 # CONFIG
-# -----------------------------
-QR_VALID_SECONDS = 3
-SUBMIT_WINDOW = 30
+# --------------------
+QR_INTERVAL = 3
+MAX_INTERVAL_DRIFT = 5
 DB_FILE = "attendance.db"
 
-# -----------------------------
+# --------------------
 # DATABASE
-# -----------------------------
+# --------------------
 def init_db():
     con = sqlite3.connect(DB_FILE)
     cur = con.cursor()
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS attendance (
-            ts INTEGER,
-            reg_no TEXT,
-            qr_token TEXT
-        )
+    CREATE TABLE IF NOT EXISTS attendance(
+        ts INTEGER,
+        reg_no TEXT,
+        qr_token TEXT
+    )
     """)
     con.commit()
     con.close()
 
 init_db()
 
-# -----------------------------
+# --------------------
 # PAGE SETUP
-# -----------------------------
+# --------------------
 st.set_page_config(page_title="QR Attendance", layout="centered")
 
 params = st.query_params
 mode = params.get("mode", "teacher")
 
-# -----------------------------
-# TEACHER VIEW
-# -----------------------------
+# --------------------
+# TEACHER PAGE
+# --------------------
 if mode == "teacher":
 
     st.title("QR Attendance")
@@ -50,73 +50,61 @@ if mode == "teacher":
 
     <script>
 
-    const VALID = {QR_VALID_SECONDS};
+    const INTERVAL = {QR_INTERVAL};
 
-    function baseURL() {{
-        return window.top.location.href.split("?")[0];
+    function baseURL(){{
+        return window.location.href.split("?")[0];
     }}
 
-    function updateQR() {{
+    function updateQR(){{
+        const interval = Math.floor(Date.now()/1000/INTERVAL);
+        const token = "QR_" + interval;
 
-        const issued = Math.floor(Date.now() / 1000);
-        const token = "QR_" + issued;
-
-        const target =
+        const url =
             baseURL() +
             "?mode=scan&token=" +
             encodeURIComponent(token);
 
         const qr =
         "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=" +
-        encodeURIComponent(target);
+        encodeURIComponent(url);
 
         document.getElementById("qr_img").src =
-        qr + "&t=" + Date.now();
+            qr + "&t=" + Date.now();
     }}
 
     updateQR();
-    setInterval(updateQR, VALID * 1000);
+    setInterval(updateQR, INTERVAL*1000);
 
     </script>
     """
 
     st.components.v1.html(qr_html, height=360)
 
-# -----------------------------
-# SCAN VIEW
-# -----------------------------
+# --------------------
+# STUDENT PAGE
+# --------------------
 elif mode == "scan":
 
     st.title("Attendance Check-in")
 
-    token = params.get("token", "")
+    token = params.get("token","")
 
     try:
-        issue_time = int(token.split("_")[1])
+        scanned_interval = int(token.split("_")[1])
     except:
         st.error("Invalid QR code")
         st.stop()
 
-    # capture scan time ONCE
-    if "scan_time" not in st.session_state:
-        st.session_state.scan_time = int(time.time())
+    current_interval = int(time.time() // QR_INTERVAL)
 
-    scan_time = st.session_state.scan_time
-    server_time = int(time.time())
-
-    # rule 1: must scan within 3 seconds of issue
-    if scan_time - issue_time > QR_VALID_SECONDS:
-        st.error("QR expired (scan too late)")
+    if current_interval - scanned_interval > MAX_INTERVAL_DRIFT:
+        st.error("QR expired. Please scan again.")
         st.stop()
 
-    # rule 2: submission must happen within 30 seconds of scan
-    if server_time - scan_time > SUBMIT_WINDOW:
-        st.error("Submission window expired")
-        st.stop()
+    reg_no = st.text_input("Registration Number")
 
-    reg_no = st.text_input("Enter Registration Number")
-
-    if st.button("Mark Attendance", use_container_width=True):
+    if st.button("Submit Attendance", use_container_width=True):
 
         if not reg_no.strip():
             st.warning("Enter registration number")
@@ -127,7 +115,7 @@ elif mode == "scan":
 
         cur.execute(
             "INSERT INTO attendance VALUES (?, ?, ?)",
-            (server_time, reg_no.strip(), token)
+            (int(time.time()), reg_no.strip(), token)
         )
 
         con.commit()
@@ -135,8 +123,8 @@ elif mode == "scan":
 
         st.success("Attendance marked successfully")
 
-# -----------------------------
+# --------------------
 # INVALID MODE
-# -----------------------------
+# --------------------
 else:
     st.error("Invalid mode")
