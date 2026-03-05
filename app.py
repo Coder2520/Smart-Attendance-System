@@ -5,7 +5,7 @@ import time
 # -----------------------------
 # CONFIG
 # -----------------------------
-QR_INTERVAL = 3
+QR_INTERVAL = 5
 DB_FILE = "attendance.db"
 
 # -----------------------------
