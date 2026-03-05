@@ -1,14 +1,13 @@
 import streamlit as st
 import sqlite3
 import time
-import json
 
 QR_INTERVAL = 3
 DB_FILE = "attendance.db"
 
-# -------------------------
-# DB
-# -------------------------
+# ---------------------
+# DATABASE
+# ---------------------
 def init_db():
     con = sqlite3.connect(DB_FILE)
     cur = con.cursor()
@@ -24,14 +23,14 @@ def init_db():
 
 init_db()
 
-st.set_page_config(page_title="QR Attendance", layout="centered")
+st.set_page_config(page_title="QR Attendance")
 
 params = st.query_params
 mode = params.get("mode", "teacher")
 
-# -------------------------
+# ---------------------
 # TEACHER PAGE
-# -------------------------
+# ---------------------
 if mode == "teacher":
 
     st.title("QR Attendance")
@@ -45,18 +44,10 @@ if mode == "teacher":
 
     const INTERVAL = {QR_INTERVAL};
 
-    function baseURL() {{
-        return window.top.location.href.split("?")[0];
-    }}
-
     function updateQR() {{
 
         const issued = Math.floor(Date.now()/1000);
         const token = "QR_" + issued;
-
-        const target =
-            baseURL() +
-            "?mode=scan";
 
         const qr =
         "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=" +
@@ -74,86 +65,77 @@ if mode == "teacher":
 
     st.components.v1.html(qr_html, height=350)
 
-# -------------------------
+# ---------------------
 # SCAN PAGE
-# -------------------------
+# ---------------------
 elif mode == "scan":
 
     st.title("Scan QR Code")
 
-    scanner_html = """
+    scan_html = """
     <div id="reader" style="width:300px"></div>
 
     <script src="https://unpkg.com/html5-qrcode"></script>
 
     <script>
 
-    function sendResult(qrText){
+    function onScanSuccess(decodedText) {
 
-        const scanTime = Math.floor(Date.now()/1000);
+        document.getElementById("qr_token").value = decodedText;
 
-        const payload = {
-            qr_token: qrText,
-            scan_time: scanTime
-        };
+        document.getElementById("scan_time").value =
+            Math.floor(Date.now()/1000);
 
-        window.parent.postMessage(
-            {type:"qr_result",data:payload},
-            "*"
-        );
-    }
-
-    function onScanSuccess(decodedText){
-
-        sendResult(decodedText);
     }
 
     const html5QrCode = new Html5Qrcode("reader");
 
     Html5Qrcode.getCameras().then(devices => {
+
         html5QrCode.start(
             devices[0].id,
             {fps:10, qrbox:250},
             onScanSuccess
         );
+
     });
 
     </script>
     """
 
-    st.components.v1.html(scanner_html, height=400)
+    st.components.v1.html(scan_html, height=400)
 
-    result = st.text_input("Paste scan result JSON")
+    # hidden fields populated by JS
+    qr_token = st.text_input("QR Token")
+    scan_time = st.text_input("Scan Time")
 
-    if result:
+    reg_no = st.text_input("Registration Number")
 
-        data = json.loads(result)
+    if st.button("Mark Attendance"):
 
-        token = data["qr_token"]
-        scan_time = data["scan_time"]
+        if not qr_token or not scan_time:
+            st.error("Scan the QR first")
+            st.stop()
 
-        issue_time = int(token.split("_")[1])
+        issue_time = int(qr_token.split("_")[1])
+        scan_time = int(scan_time)
 
         if scan_time - issue_time > 3:
             st.error("QR expired")
             st.stop()
 
-        reg_no = st.text_input("Registration Number")
+        con = sqlite3.connect(DB_FILE)
+        cur = con.cursor()
 
-        if st.button("Submit"):
+        cur.execute(
+            "INSERT INTO attendance VALUES (?, ?, ?)",
+            (int(time.time()), reg_no, qr_token)
+        )
 
-            con = sqlite3.connect(DB_FILE)
-            cur = con.cursor()
+        con.commit()
+        con.close()
 
-            cur.execute(
-                "INSERT INTO attendance VALUES (?, ?, ?)",
-                (int(time.time()), reg_no, token)
-            )
-
-            con.commit()
-            con.close()
-
-            st.success("Attendance marked")
+        st.success("Attendance marked")
 
 else:
     st.error("Invalid mode")
