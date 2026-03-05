@@ -3,11 +3,12 @@ import sqlite3
 import time
 
 QR_INTERVAL = 3
+ALLOWED_INTERVAL_DRIFT = 3
 DB_FILE = "attendance.db"
 
-# -----------------------------
+# -------------------------
 # DATABASE
-# -----------------------------
+# -------------------------
 def init_db():
     con = sqlite3.connect(DB_FILE)
     cur = con.cursor()
@@ -28,9 +29,9 @@ st.set_page_config(page_title="QR Attendance")
 params = st.query_params
 mode = params.get("mode", "teacher")
 
-# -----------------------------
-# TEACHER PAGE
-# -----------------------------
+# -------------------------
+# TEACHER VIEW
+# -------------------------
 if mode == "teacher":
 
     st.title("QR Attendance")
@@ -75,9 +76,9 @@ if mode == "teacher":
 
     st.components.v1.html(qr_html, height=360)
 
-# -----------------------------
-# STUDENT PAGE
-# -----------------------------
+# -------------------------
+# STUDENT VIEW
+# -------------------------
 elif mode == "scan":
 
     st.title("Attendance Check-in")
@@ -87,22 +88,21 @@ elif mode == "scan":
     try:
         scanned_interval = int(token.split("_")[1])
     except:
-        st.error("Invalid QR")
+        st.error("Invalid QR code")
         st.stop()
 
     current_interval = int(time.time() // QR_INTERVAL)
 
-    # Accept current or previous interval
-    if current_interval - scanned_interval > 1:
+    if current_interval - scanned_interval > ALLOWED_INTERVAL_DRIFT:
         st.error("QR expired. Please scan again.")
         st.stop()
 
     reg_no = st.text_input("Registration Number")
 
-    if st.button("Submit Attendance", use_container_width=True):
+    if st.button("Submit Attendance"):
 
         if not reg_no.strip():
-            st.warning("Enter registration number")
+            st.warning("Please enter registration number")
             st.stop()
 
         con = sqlite3.connect(DB_FILE)
