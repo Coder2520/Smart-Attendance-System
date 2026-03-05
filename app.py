@@ -10,7 +10,7 @@ QR_HISTORY = 10
 DB_FILE = "attendance.db"
 
 # -------------------------------
-# DATABASE SETUP
+# DATABASE
 # -------------------------------
 def init_db():
     con = sqlite3.connect(DB_FILE)
@@ -40,7 +40,7 @@ mode = params.get("mode", "teacher")
 # -------------------------------
 if mode == "teacher":
 
-    st.title("QR Attendance System")
+    st.title("QR Attendance")
     st.caption("QR rotates every 3 seconds")
 
     qr_html = f"""
@@ -49,6 +49,7 @@ if mode == "teacher":
     </div>
 
     <script>
+
     const INTERVAL = {QR_INTERVAL};
 
     function baseURL() {{
@@ -57,8 +58,8 @@ if mode == "teacher":
 
     function updateQR() {{
 
-        const interval = Math.floor(Date.now()/1000/{QR_INTERVAL});
-        const token = "QR_" + interval;
+        const issued = Math.floor(Date.now() / 1000);
+        const token = "QR_" + issued;
 
         const target =
             baseURL() +
@@ -74,14 +75,15 @@ if mode == "teacher":
     }}
 
     updateQR();
-    setInterval(updateQR, INTERVAL*1000);
+    setInterval(updateQR, INTERVAL * 1000);
+
     </script>
     """
 
     st.components.v1.html(qr_html, height=360)
 
 # -------------------------------
-# STUDENT SCAN VIEW
+# SCAN VIEW
 # -------------------------------
 elif mode == "scan":
 
@@ -89,45 +91,42 @@ elif mode == "scan":
 
     token = params.get("token", "")
 
-    # determine valid tokens from server time
-    current_interval = int(time.time() // QR_INTERVAL)
+    try:
+        issued_time = int(token.split("_")[1])
+    except:
+        st.error("Invalid QR code")
+        st.stop()
 
-    valid_tokens = [
-        f"QR_{current_interval - i}"
-        for i in range(QR_HISTORY)
-    ]
+    current_time = int(time.time())
 
-    if token not in valid_tokens:
+    # convert to interval indices
+    issued_interval = issued_time // QR_INTERVAL
+    current_interval = current_time // QR_INTERVAL
+
+    if current_interval - issued_interval > QR_HISTORY:
         st.error("QR expired. Please scan again.")
         st.stop()
 
-    reg_no = st.text_input(
-        "Enter Registration Number",
-        placeholder="e.g. 22BCE1234"
-    )
+    reg_no = st.text_input("Enter Registration Number")
 
-    if st.button("Mark Attendance", use_container_width=True):
+    if st.button("Mark Attendance"):
 
         if not reg_no.strip():
-            st.warning("Please enter registration number.")
+            st.warning("Enter registration number")
             st.stop()
 
-        try:
-            con = sqlite3.connect(DB_FILE)
-            cur = con.cursor()
+        con = sqlite3.connect(DB_FILE)
+        cur = con.cursor()
 
-            cur.execute(
-                "INSERT INTO attendance VALUES (?, ?, ?)",
-                (int(time.time()), reg_no.strip(), token)
-            )
+        cur.execute(
+            "INSERT INTO attendance VALUES (?, ?, ?)",
+            (current_time, reg_no.strip(), token)
+        )
 
-            con.commit()
-            con.close()
+        con.commit()
+        con.close()
 
-            st.success("Attendance marked successfully")
-
-        except:
-            st.error("Database error while saving attendance")
+        st.success("Attendance marked")
 
 # -------------------------------
 # INVALID MODE
