@@ -5,7 +5,7 @@ import time
 # -----------------------------
 # CONFIG
 # -----------------------------
-QR_INTERVAL = 6
+QR_INTERVAL = 3
 DB_FILE = "attendance.db"
 
 # -----------------------------
@@ -40,7 +40,6 @@ mode = params.get("mode", "teacher")
 if mode == "teacher":
 
     st.title("QR Attendance")
-    st.caption("QR rotates every 3 seconds")
 
     qr_html = f"""
     <div style="text-align:center;">
