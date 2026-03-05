@@ -11,7 +11,7 @@ DB_FILE = "attendance.db"
 
 # IMPORTANT
 # If deployed, replace with your deployed URL
-APP_URL = "http://localhost:8501"
+APP_URL = "https://smart-qr-based-attendance-system.streamlit.app/:8501"
 
 # -----------------------------
 # DATABASE
