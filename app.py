@@ -1,135 +1,135 @@
 import streamlit as st
-import time
 import sqlite3
+import time
+from collections import deque
 
 # -------------------------------
 # CONFIG
 # -------------------------------
-QR_VALID_SECONDS = 5          # how long a QR is valid
-DB_FILE = "qr_scan.db"
+QR_INTERVAL = 3
+QR_QUEUE_SIZE = 10
+DB_FILE = "attendance.db"
 
 # -------------------------------
 # DATABASE
 # -------------------------------
-@st.cache_resource
 def init_db():
-    con = sqlite3.connect(DB_FILE, check_same_thread=False)
+    con = sqlite3.connect(DB_FILE)
     cur = con.cursor()
     cur.execute("""
-        CREATE TABLE IF NOT EXISTS scans (
+        CREATE TABLE IF NOT EXISTS attendance (
             ts INTEGER,
             reg_no TEXT,
-            status TEXT
+            qr_token TEXT
         )
     """)
     con.commit()
-    return con
+    con.close()
 
-DB = init_db()
+init_db()
 
 # -------------------------------
-# PAGE CONFIG
+# QR TOKEN QUEUE
 # -------------------------------
-st.set_page_config(page_title="QR Attendance", layout="centered")
+if "qr_queue" not in st.session_state:
+    st.session_state.qr_queue = deque(maxlen=QR_QUEUE_SIZE)
 
-mode = st.query_params.get("mode", "teacher")
+# generate current QR token
+current_interval = int(time.time() // QR_INTERVAL)
+current_qr = f"QR_{current_interval}"
+
+# update queue
+if not st.session_state.qr_queue or st.session_state.qr_queue[-1] != current_qr:
+    st.session_state.qr_queue.append(current_qr)
+
+# -------------------------------
+# ROUTING
+# -------------------------------
+params = st.query_params
+mode = params.get("mode", "teacher")
 
 # -------------------------------
 # TEACHER VIEW
 # -------------------------------
 if mode == "teacher":
+
     st.title("QR Attendance")
-    st.caption("Scan the QR code to mark attendance")
+    st.caption("QR rotates every 3 seconds")
 
     qr_html = f"""
     <div style="text-align:center;">
-        <img id="qr_img" width="300"/>
+        <img id="qr_img" width="300">
     </div>
 
     <script>
-    const QR_VALID_SECONDS = {QR_VALID_SECONDS};
+    const INTERVAL = {QR_INTERVAL};
 
     function baseURL() {{
         return window.top.location.href.split("?")[0];
     }}
 
     function updateQR() {{
-        // exact issue timestamp (seconds)
-        const issuedAt = Math.floor(Date.now() / 1000);
-        const token = "QR_" + issuedAt;
+        const interval = Math.floor(Date.now()/1000/{QR_INTERVAL});
+        const token = "QR_" + interval;
 
         const target =
             baseURL() +
             "?mode=scan&token=" +
             encodeURIComponent(token);
 
-        const qr_api =
-            "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=" +
-            encodeURIComponent(target);
+        const qr =
+        "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=" +
+        encodeURIComponent(target);
 
         document.getElementById("qr_img").src =
-            qr_api + "&t=" + Date.now();
+        qr + "&t=" + Date.now();
     }}
 
     updateQR();
-    setInterval(updateQR, QR_VALID_SECONDS * 1000);
+    setInterval(updateQR, INTERVAL*1000);
     </script>
     """
 
     st.components.v1.html(qr_html, height=360)
 
 # -------------------------------
-# SCAN VIEW (PHONE)
+# STUDENT SCAN VIEW
 # -------------------------------
 elif mode == "scan":
-    st.set_page_config(page_title="Attendance Check-in", layout="centered")
+
     st.title("Attendance Check-in")
 
-    # capture scan event time ONCE
-    if "scan_time" not in st.session_state:
-        st.session_state.scan_time = int(time.time())
+    token = params.get("token", "")
 
-    scan_time = st.session_state.scan_time
-
-    token = st.query_params.get("token", "")
-
-    try:
-        issued_at = int(token.split("_")[1])
-    except:
-        st.error("Invalid QR code")
+    if token not in st.session_state.qr_queue:
+        st.error("QR expired. Please scan again.")
         st.stop()
 
-    reg_no = st.text_input(
-        "Enter Registration Number",
-        placeholder="e.g. 22BCE1234"
-    )
+    reg_no = st.text_input("Enter Registration Number")
 
     if st.button("Mark Attendance", use_container_width=True):
 
         if not reg_no.strip():
-            st.warning("Please enter your registration number")
+            st.warning("Enter registration number")
             st.stop()
-
-        if 0 <= (scan_time - issued_at) <= QR_VALID_SECONDS:
-            status = "PRESENT"
-            st.success("Attendance marked")
-        else:
-            status = "EXPIRED"
-            st.error("QR expired")
 
         try:
-            cur = DB.cursor()
+            con = sqlite3.connect(DB_FILE)
+            cur = con.cursor()
             cur.execute(
-                "INSERT INTO scans (ts, reg_no, status) VALUES (?, ?, ?)",
-                (scan_time, reg_no.strip(), status)
+                "INSERT INTO attendance (ts, reg_no, qr_token) VALUES (?, ?, ?)",
+                (int(time.time()), reg_no.strip(), token)
             )
-            DB.commit()
+            con.commit()
+            con.close()
+
+            st.success("Attendance marked")
+
         except:
-            st.error("Database error while saving attendance")
-            st.stop()
+            st.error("Database error")
 
 # -------------------------------
-# FALLBACK
+# INVALID MODE
 # -------------------------------
 else:
     st.error("Invalid mode")
