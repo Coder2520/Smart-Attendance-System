@@ -1,5 +1,5 @@
 import streamlit as st
-import sqlite3
+import mysql.connector  # MySQL connector
 import time
 import pandas as pd
 import face_recognition
@@ -14,29 +14,54 @@ import math
 # -----------------------------
 QR_INTERVAL = 3
 MAX_INTERVAL_DRIFT = 5
-DB_FILE = "attendance.db"
-APP_URL = "https://smart-qr-based-attendance-system.streamlit.app"
+
+DB_HOST = "localhost"        # MySQL host
+DB_USER = "root"             # MySQL username
+DB_PASSWORD = "password"     # MySQL password
+DB_NAME = "attendance_db"    # MySQL database
+
+APP_URL = "https://smart-qr-based-attendance-system.streamlit.app/"
+
+# Slots
+SLOTS = ["A1","A2","B1","B2","C1","C2","D1","D2","E1","E2","F1","F2","G1","G2"]
 
 # -----------------------------
 # DATABASE
 # -----------------------------
 def init_db():
-    con = sqlite3.connect(DB_FILE)
+    con = mysql.connector.connect(
+        host=DB_HOST,
+        user=DB_USER,
+        password=DB_PASSWORD
+    )
     cur = con.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS attendance (
-            ts INTEGER,
-            reg_no TEXT,
-            qr_token TEXT,
-            distance REAL,
-            date TEXT,
-            slot TEXT
-        )
-    """)
+    # Create database if not exists
+    cur.execute(f"CREATE DATABASE IF NOT EXISTS {DB_NAME}")
+    cur.execute(f"USE {DB_NAME}")
+
+    # Create one table for each slot
+    for slot in SLOTS:
+        cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS attendance_{slot} (
+                ts BIGINT,
+                reg_no VARCHAR(50),
+                qr_token VARCHAR(100),
+                date VARCHAR(20)
+            )
+        """)
     con.commit()
+    cur.close()
     con.close()
 
 init_db()
+
+def get_db_connection():
+    return mysql.connector.connect(
+        host=DB_HOST,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        database=DB_NAME
+    )
 
 # -----------------------------
 # PAGE SETUP
@@ -47,7 +72,6 @@ st.set_page_config(
     layout="centered"
 )
 
-# Header UI
 st.markdown(
 """
 <h1 style='text-align:center;'>Smart QR Attendance System</h1>
@@ -145,22 +169,28 @@ if mode == "teacher":
         """
         st.components.v1.html(qr_html, height=340)
 
-    # Download CSV filtered by date + slot
+    # Download CSV filtered by slot
     st.markdown("---")
     st.subheader("Download Attendance")
-    con = sqlite3.connect(DB_FILE)
-    if "date" in st.session_state and "slot" in st.session_state:
-        query = "SELECT * FROM attendance WHERE date=? AND slot=?"
-        df = pd.read_sql_query(query, con, params=(st.session_state["date"], st.session_state["slot"]))
+    if "slot" in st.session_state and st.session_state["slot"] in SLOTS:
+        slot_table = f"attendance_{st.session_state['slot']}"
+        con = get_db_connection()
+        cur = con.cursor(dictionary=True)
+        cur.execute(f"SELECT * FROM {slot_table} WHERE date=%s", (st.session_state["date"],))
+        rows = cur.fetchall()
+        df = pd.DataFrame(rows)
+        if not df.empty:
+            csv = df.to_csv(index=False).encode("utf-8")
+            st.download_button("Download CSV", csv, f"attendance_{st.session_state['slot']}.csv", "text/csv")
+            # Delete records after download
+            cur.execute(f"DELETE FROM {slot_table} WHERE date=%s", (st.session_state["date"],))
+            con.commit()
+        else:
+            st.info("No attendance recorded yet.")
+        cur.close()
+        con.close()
     else:
-        df = pd.read_sql_query("SELECT * FROM attendance", con)
-    con.close()
-
-    if not df.empty:
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("Download CSV", csv, "attendance.csv", "text/csv")
-    else:
-        st.info("No attendance recorded yet.")
+        st.info("Select a valid slot to download attendance.")
 
 # -----------------------------
 # STUDENT SCAN PAGE
@@ -169,7 +199,7 @@ elif mode == "scan":
     st.subheader("Student Attendance Check-in")
     token = params.get("token", "")
     date_val = params.get("date", "unknown")
-    slot_val = params.get("slot", "unknown")  # <-- NEW: read from QR
+    slot_val = params.get("slot", "unknown")  # <-- read from QR
 
     # QR token validation
     try:
@@ -239,18 +269,24 @@ elif mode == "scan":
         # -----------------------------
         # IGNORE SMALL FACES 
         # -----------------------------
+        img_h, img_w, _ = captured_np.shape
         valid_faces = []
+
         for (top, right, bottom, left) in face_locations:
             width = right - left
             height = bottom - top
-            if width >= 80 and height >= 80:  # ignore small faces
+            # Ignore faces smaller than 50px or <5% of image dimensions
+            if width >= max(50, img_w * 0.05) and height >= max(50, img_h * 0.05):
                 valid_faces.append((top, right, bottom, left))
 
         if len(valid_faces) == 0:
             st.error("No large face detected for verification")
             st.stop()
 
-        # Check all valid faces
+        # Sort faces by area (largest first) for prioritizing likely student face
+        valid_faces.sort(key=lambda f: (f[2]-f[0])*(f[1]-f[3]), reverse=True)
+
+        # Check all valid faces against reference
         matched = False
         min_distance = 1.0
         for face in valid_faces:
@@ -275,15 +311,21 @@ elif mode == "scan":
         st.subheader("Verification Result")
         st.write(f"Distance Score: {round(float(min_distance), 3)}")
 
+
         if matched:
-            # Save attendance with date + slot from QR
-            con = sqlite3.connect(DB_FILE)
+            if slot_val not in SLOTS:
+                st.error("Invalid slot detected from QR")
+                st.stop()
+            # Save attendance with date + slot into the correct table
+            con = get_db_connection()
             cur = con.cursor()
+            slot_table = f"attendance_{slot_val}"
             cur.execute(
-                "INSERT INTO attendance VALUES (?,?,?,?,?,?)",
-                (int(time.time()), reg_no, token, float(min_distance), date_val, slot_val)
+                f"INSERT INTO {slot_table} (ts, reg_no, qr_token, date) VALUES (%s, %s, %s, %s)",
+                (int(time.time()), reg_no, token,  date_val)
             )
             con.commit()
+            cur.close()
             con.close()
             st.success(f"Attendance Marked for {reg_no}")
         else:
