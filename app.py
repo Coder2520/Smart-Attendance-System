@@ -15,7 +15,7 @@ import math
 QR_INTERVAL = 3
 MAX_INTERVAL_DRIFT = 5
 DB_FILE = "attendance.db"
-APP_URL = "https://smart-qr-based-attendance-system.streamlit.app/"
+APP_URL = "https://smart-qr-based-attendance-system.streamlit.app"
 
 # -----------------------------
 # DATABASE
