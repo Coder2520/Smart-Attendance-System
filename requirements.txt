@@ -5,5 +5,5 @@ opencv-python-headless
 numpy
 pandas
 Pillow
-qrcode
 mysql-connector-python
+qrcode
