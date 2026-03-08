@@ -15,12 +15,13 @@ import math
 QR_INTERVAL = 3
 MAX_INTERVAL_DRIFT = 5
 
-DB_HOST = "localhost"        # MySQL host
-DB_USER = "root"             # MySQL username
-DB_PASSWORD = "password"     # MySQL password
-DB_NAME = "attendance_db"    # MySQL database
+DB_HOST = os.environ.get("MYSQLHOST")
+DB_USER = os.environ.get("MYSQLUSER")
+DB_PASSWORD = os.environ.get("MYSQLPASSWORD")
+DB_NAME = os.environ.get("MYSQLDATABASE")
+DB_PORT = os.environ.get("MYSQLPORT")
 
-APP_URL = "https://smart-qr-based-attendance-system.streamlit.app/"
+APP_URL = "https://smart-qr-based-attendance-system.streamlit.app"
 
 # Slots
 SLOTS = ["A1","A2","B1","B2","C1","C2","D1","D2","E1","E2","F1","F2","G1","G2"]
@@ -29,15 +30,8 @@ SLOTS = ["A1","A2","B1","B2","C1","C2","D1","D2","E1","E2","F1","F2","G1","G2"]
 # DATABASE
 # -----------------------------
 def init_db():
-    con = mysql.connector.connect(
-        host=DB_HOST,
-        user=DB_USER,
-        password=DB_PASSWORD
-    )
+    con = get_db_connection()
     cur = con.cursor()
-    # Create database if not exists
-    cur.execute(f"CREATE DATABASE IF NOT EXISTS {DB_NAME}")
-    cur.execute(f"USE {DB_NAME}")
 
     # Create one table for each slot
     for slot in SLOTS:
@@ -49,6 +43,8 @@ def init_db():
                 date VARCHAR(20)
             )
         """)
+
+    st.write("Connection successful.")
     con.commit()
     cur.close()
     con.close()
@@ -58,6 +54,7 @@ init_db()
 def get_db_connection():
     return mysql.connector.connect(
         host=DB_HOST,
+        port=DB_PORT,
         user=DB_USER,
         password=DB_PASSWORD,
         database=DB_NAME
@@ -137,7 +134,7 @@ if mode == "teacher":
 
     # Teacher enters date + slot
     date_input = st.date_input("Select Date")
-    slot_input = st.text_input("Enter Slot")
+    slot_input = st.selectbox("Select Slot", SLOTS)
 
     if date_input and slot_input:
         st.session_state["date"] = str(date_input)
