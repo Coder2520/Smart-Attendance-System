@@ -6,4 +6,3 @@ numpy
 pandas
 Pillow
 mysql-connector-python
-qrcode
