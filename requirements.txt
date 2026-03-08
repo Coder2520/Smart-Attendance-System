@@ -1,3 +1,9 @@
 streamlit
+face-recognition
+dlib
+opencv-python-headless
+numpy
+pandas
+Pillow
 qrcode
-pillow
+mysql-connector-python
